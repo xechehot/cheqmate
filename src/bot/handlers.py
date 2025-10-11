@@ -112,29 +112,48 @@ async def photo_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
         # Initialize Anthropic service
         anthropic_service = AnthropicService()
 
-        # Extract receipt items
-        receipt_items = await anthropic_service.extract_receipt_items(bytes(image_bytes))
+        # Step 1: Extract receipt data with currency
+        await processing_message.edit_text("📋 Analyzing receipt...")
+        receipt_data = await anthropic_service.extract_receipt_items(bytes(image_bytes))
 
-        # Split the bill
+        # Show receipt OCR results
+        await processing_message.edit_text(receipt_data.format_summary(), parse_mode="Markdown")
+
+        # Step 2: Split the bill
+        await update.message.reply_text("🔄 Splitting bill between participants...")
+
         if not session.participant_description:
             raise ValueError("Missing participant description")
 
         bill_split = await anthropic_service.split_bill(
             participant_description=session.participant_description,
-            receipt_items=receipt_items,
+            receipt_data=receipt_data,
             image_bytes=bytes(image_bytes),
         )
 
-        # Format and send the result
-        result_text = bill_split.format_summary()
+        # Step 3: Verify and refine split
+        verify_message = await update.message.reply_text("🔍 Verifying totals...")
 
-        # Delete processing message
-        await processing_message.delete()
+        refined_split, was_refined, explanation = await anthropic_service.verify_and_refine_split(
+            bill_split=bill_split,
+            receipt_data=receipt_data,
+        )
 
-        # Send result
+        # Delete verification message
+        await verify_message.delete()
+
+        # Step 4: Send final result
+        if was_refined:
+            title = "✅ Verified & Refined Bill Split"
+            result_text = refined_split.format_summary(title=title)
+            result_text += f"\n\n_Note: {explanation}_"
+        else:
+            title = "✅ Verified Bill Split"
+            result_text = refined_split.format_summary(title=title)
+
         await update.message.reply_text(result_text, parse_mode="Markdown")
 
-        logger.info(f"Successfully processed bill for chat {chat_id}")
+        logger.info(f"Successfully processed bill for chat {chat_id} (refined: {was_refined})")
 
         # Reset session after successful processing
         session.reset()

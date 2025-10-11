@@ -34,8 +34,8 @@ class Settings(BaseSettings):
     )
 
     # Anthropic API
-    anthropic_api_key: str | None = Field(
-        default=None,
+    anthropic_api_key: str = Field(
+        ...,
         description="Anthropic API key for Claude Vision",
     )
 

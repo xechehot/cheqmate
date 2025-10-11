@@ -9,25 +9,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Technology Stack
 
 - **Python 3.13**: Required Python version
-- **uv**: Package and dependency manager (replaces pip/poetry/pipenv)
-- **Telegram Bot API**: For bot interaction
-- **AI/ML Services**: Voice-to-text and OCR for receipt processing
+- **uv**: Package and dependency manager
+- **python-telegram-bot**: Telegram bot framework with async support
+- **OpenAI API**: Whisper for voice transcription, GPT-4 Vision for receipt OCR
+- **Anthropic Claude**: Alternative vision API for receipt processing
+- **thefuzz + python-Levenshtein**: Fuzzy string matching for dish assignment
+- **Splitwise SDK**: Export functionality for Splitwise
+- **httpx**: Async HTTP client for Tricount API
+- **SQLAlchemy**: Database ORM for storing conversation state
+- **Pydantic**: Data validation and settings management
 
 ## Development Setup
 
 ### Initial Project Setup
 
 ```bash
-# Initialize uv project (if not already done)
-uv init
+# Project already initialized with uv
+# Virtual environment created at .venv/
 
-# Create and activate virtual environment
-uv venv
-source .venv/bin/activate  # On macOS/Linux
-# .venv\Scripts\activate   # On Windows
+# Install all dependencies (production + dev)
+uv sync
 
-# Install dependencies
-uv pip install -r requirements.txt  # or pyproject.toml
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your actual API keys
 ```
 
 ### Common Commands
@@ -44,7 +49,7 @@ uv lock
 uv sync
 
 # Run the bot
-uv run python -m cheqmate  # or main entry point
+uv run python main.py
 
 # Run tests
 uv run pytest
@@ -95,12 +100,14 @@ Export Service → Push to Splitwise/Tricount
 
 ## Configuration
 
-- Store API keys and tokens in `.env` file (never commit this)
-- Required environment variables:
-  - `TELEGRAM_BOT_TOKEN`: Telegram bot API token
-  - `SPLITWISE_API_KEY`: Splitwise API credentials
-  - `TRICOUNT_API_KEY`: Tricount API credentials (if applicable)
-  - AI service keys for voice/OCR processing
+Copy `.env.example` to `.env` and fill in your API keys:
+
+- `TELEGRAM_BOT_TOKEN`: Get from [@BotFather](https://t.me/botfather) on Telegram
+- `OPENAI_API_KEY`: For Whisper voice transcription and GPT-4 Vision OCR
+- `ANTHROPIC_API_KEY`: Alternative to OpenAI for receipt processing
+- `SPLITWISE_CONSUMER_KEY` & `SPLITWISE_CONSUMER_SECRET`: From [Splitwise Apps](https://secure.splitwise.com/apps)
+- `TRICOUNT_API_KEY`: For Tricount integration (if available)
+- `DATABASE_URL`: SQLite path (default: `sqlite:///cheqmate.db`)
 
 ## Project Structure Conventions
 

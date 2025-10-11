@@ -9,7 +9,7 @@ from decimal import Decimal
 from anthropic import Anthropic
 
 from src.config import settings
-from src.models.bill import BillSplit, ParticipantShare, ReceiptData, ReceiptItem
+from src.models.bill import BillSplit, ParticipantItem, ParticipantShare, ReceiptData, ReceiptItem
 
 logger = logging.getLogger(__name__)
 
@@ -90,24 +90,31 @@ class AnthropicService:
 
 First, carefully examine the receipt to identify:
 1. The currency used (look for currency symbols like $, €, £, ₸, ₽, etc. or ISO codes)
-2. All individual items/dishes with their prices
+2. All individual items/dishes with their UNIT prices (price PER SINGLE ITEM, not line total)
 3. Quantities (if specified, otherwise default to 1)
 4. Subtotal (sum of all items)
-5. Tax amount (if present, otherwise 0)
-6. Tip/gratuity (if present, otherwise 0)
-7. Grand total
+5. Total amount
+
+IMPORTANT: For the "price" field, extract the UNIT price (price per single item).
+- If receipt shows "Pizza x2 = 25.00", extract: price=12.50 (calculated as 25.00÷2), quantity=2
+- If receipt shows "Salad = 8.00", extract: price=8.00, quantity=1
+- The "price" field should ALWAYS be the price for ONE unit of the item
 
 Then output ONLY a valid JSON object with this exact structure (no markdown, no explanations):
 {
   "currency": "USD",
   "items": [
-    {"name": "item name", "price": 12.50, "quantity": 1}
+    {"name": "Pizza", "price": 12.50, "quantity": 2},
+    {"name": "Salad", "price": 8.00, "quantity": 1}
   ],
-  "subtotal": 50.00,
-  "tax": 4.50,
-  "tip": 10.00,
-  "grand_total": 64.50
+  "subtotal": 33.00,
+  "total": 33.00
 }
+
+Note: In the example above:
+- Pizza: unit price 12.50, quantity 2, line total = 12.50 × 2 = 25.00
+- Salad: unit price 8.00, quantity 1, line total = 8.00 × 1 = 8.00
+- Subtotal: 25.00 + 8.00 = 33.00
 
 For currency, use ISO 4217 codes:
 - $ or dollars → USD
@@ -173,9 +180,7 @@ If unclear, use USD as default."""
                 items=items,
                 currency=data.get("currency", "USD"),
                 subtotal=Decimal(str(data["subtotal"])),
-                tax=Decimal(str(data.get("tax", 0))),
-                tip=Decimal(str(data.get("tip", 0))),
-                grand_total=Decimal(str(data["grand_total"])),
+                total=Decimal(str(data["total"])),
             )
 
             logger.info(f"Extracted {len(items)} items from receipt in {receipt_data.currency}")
@@ -221,39 +226,43 @@ If unclear, use USD as default."""
 
 **Receipt totals:**
 Currency: {receipt_data.currency}
-Subtotal: {receipt_data.subtotal}
-Tax: {receipt_data.tax}
-Tip: {receipt_data.tip}
-Grand Total: {receipt_data.grand_total}
+Total: {receipt_data.total}
 
 **Task:**
 First, analyze the participant description to identify:
 1. Each person's name
-2. What items each person ordered (match items from the receipt using fuzzy matching)
-3. Handle shared items by splitting them proportionally
+2. What items each person ordered (match items from the receipt)
+3. Handle shared items by indicating fractional ownership
 
-Then, calculate the bill split:
-1. Match each receipt item to one or more participants
-2. Calculate each person's subtotal (sum of their item prices)
-3. Distribute tax ({receipt_data.tax}) proportionally based on each person's subtotal percentage
-4. Distribute tip ({receipt_data.tip}) proportionally based on each person's subtotal percentage
-5. Calculate final total for each person
+For each person, assign items with fractional ownership using numerator/denominator:
+- If a person ate the whole item: item_numerator=1, item_denominator=1
+- If 2 people shared equally: item_numerator=1, item_denominator=2 (for each person)
+- If 3 people shared equally: item_numerator=1, item_denominator=3 (for each person)
+- If someone ate 2/3 of an item: item_numerator=2, item_denominator=3
+
+DO NOT calculate totals or do any math. Only assign items with fractions.
+The system will calculate totals automatically based on receipt prices.
 
 Output ONLY a valid JSON object with this exact structure (no markdown, no explanations):
 {{
   "participants": [
     {{
       "name": "Person Name",
-      "items": ["item1", "item2"],
-      "subtotal": 25.50,
-      "tax_share": 2.30,
-      "tip_share": 5.10,
-      "total": 32.90
+      "items": [
+        {{
+          "item_name": "item name from receipt",
+          "item_numerator": 1,
+          "item_denominator": 2
+        }}
+      ]
     }}
   ]
 }}
 
-CRITICAL: The sum of all participant subtotals must equal {receipt_data.subtotal}, all tax shares must equal {receipt_data.tax}, and all tip shares must equal {receipt_data.tip}."""
+Important:
+- Match item names closely to receipt items
+- For shared items, ensure denominators add up correctly (e.g., if 2 people share, both get 1/2)
+- Use only the item names, numerators, and denominators - no totals"""
 
         # Call Claude API with response prefilling
         message = self.client.messages.create(
@@ -285,7 +294,7 @@ CRITICAL: The sum of all participant subtotals must equal {receipt_data.subtotal
         response_text = message.content[0].text if message.content else ""
         # Prepend the prefilled "{" back to make valid JSON
         full_response = "{" + response_text
-        logger.debug(f"Claude split response: {full_response}")
+        logger.info(f"Claude split response: {full_response}")
 
         # Extract JSON from potential markdown wrapper
         json_text = extract_json_from_response(full_response)
@@ -294,28 +303,32 @@ CRITICAL: The sum of all participant subtotals must equal {receipt_data.subtotal
         try:
             split_data = json.loads(json_text)
 
-            # Build ParticipantShare objects
-            participants = [
-                ParticipantShare(
-                    name=p["name"],
-                    items=p["items"],
-                    subtotal=Decimal(str(p["subtotal"])),
-                    tax_share=Decimal(str(p["tax_share"])),
-                    tip_share=Decimal(str(p["tip_share"])),
-                    total=Decimal(str(p["total"])),
+            # Build ParticipantShare objects with items
+            participants = []
+            for p in split_data["participants"]:
+                # Build ParticipantItem objects
+                participant_items = [
+                    ParticipantItem(
+                        item_name=item["item_name"],
+                        item_numerator=item["item_numerator"],
+                        item_denominator=item["item_denominator"],
+                    )
+                    for item in p["items"]
+                ]
+
+                participants.append(
+                    ParticipantShare(
+                        name=p["name"],
+                        items=participant_items,
+                    )
                 )
-                for p in split_data["participants"]
-            ]
 
             # Build BillSplit object using receipt data
             bill_split = BillSplit(
                 participants=participants,
                 receipt_items=receipt_data.items,
                 currency=receipt_data.currency,
-                subtotal=receipt_data.subtotal,
-                tax=receipt_data.tax,
-                tip=receipt_data.tip,
-                grand_total=receipt_data.grand_total,
+                total=receipt_data.total,
             )
 
             logger.info(f"Successfully split bill among {len(participants)} participants")
@@ -339,73 +352,99 @@ CRITICAL: The sum of all participant subtotals must equal {receipt_data.subtotal
         """
         logger.info("Verifying bill split accuracy")
 
-        # Calculate sums from participants
-        participants_subtotal = sum(p.subtotal for p in bill_split.participants)
-        participants_tax = sum(p.tax_share for p in bill_split.participants)
-        participants_tip = sum(p.tip_share for p in bill_split.participants)
-        participants_total = sum(p.total for p in bill_split.participants)
+        # Calculate totals for each participant in Python
+        participant_totals: dict[str, Decimal] = {}
+        calculation_errors: list[str] = []
 
-        # Check for discrepancies (allow 0.01 tolerance for rounding)
-        tolerance = Decimal("0.01")
-        subtotal_diff = abs(participants_subtotal - receipt_data.subtotal)
-        tax_diff = abs(participants_tax - receipt_data.tax)
-        tip_diff = abs(participants_tip - receipt_data.tip)
-        total_diff = abs(participants_total - receipt_data.grand_total)
+        for participant in bill_split.participants:
+            try:
+                calculated_total = participant.calculate_total(receipt_data.items)
+                participant_totals[participant.name] = calculated_total
+            except ValueError as e:
+                calculation_errors.append(f"{participant.name}: {e}")
+                logger.error(f"Calculation error for {participant.name}: {e}")
+
+        # If there were matching errors, fail early
+        if calculation_errors:
+            error_msg = "Item matching errors:\n" + "\n".join(calculation_errors)
+            logger.error(error_msg)
+            return (bill_split, False, error_msg)
+
+        # Calculate sum of all participant totals
+        participants_total = sum(participant_totals.values())
+
+        # Check for discrepancies (allow 0.02 tolerance for rounding)
+        tolerance = Decimal("0.02")
+        total_diff = abs(participants_total - receipt_data.total)
 
         # If all checks pass, return original split
-        if (subtotal_diff <= tolerance and tax_diff <= tolerance and
-            tip_diff <= tolerance and total_diff <= tolerance):
+        if total_diff <= tolerance:
             logger.info("Bill split verification passed")
             return (bill_split, False, "Split verified - all totals match")
 
-        # Build verification prompt
-        logger.warning(f"Split discrepancies detected - Subtotal: {subtotal_diff}, Tax: {tax_diff}, Tip: {tip_diff}, Total: {total_diff}")
+        # Build verification prompt with calculated values
+        logger.warning(f"Split discrepancy detected - Total diff: {total_diff}")
 
-        # Format participant data for prompt
-        participants_text = "\n".join([
-            f"- {p.name}: subtotal={p.subtotal}, tax={p.tax_share}, tip={p.tip_share}, total={p.total}"
-            for p in bill_split.participants
+        # Format participant data with calculated totals and items
+        participants_text = []
+        for participant in bill_split.participants:
+            items_list = [
+                f"{item.item_name} ({item.item_numerator}/{item.item_denominator})"
+                for item in participant.items
+            ]
+            calculated = participant_totals[participant.name]
+            participants_text.append(
+                f"- {participant.name}:\n"
+                f"  Items: {', '.join(items_list)}\n"
+                f"  Calculated total: {calculated}"
+            )
+
+        participants_formatted = "\n".join(participants_text)
+
+        # Format receipt items for reference
+        receipt_items_text = "\n".join([
+            f"- {item.name}: {item.price} (x{item.quantity}) = {item.total_price}"
+            for item in receipt_data.items
         ])
 
         prompt = f"""You are verifying a restaurant bill split for mathematical accuracy.
 
-**Receipt Totals (CORRECT VALUES):**
+**Receipt Items (GROUND TRUTH):**
+{receipt_items_text}
+
+**Receipt Total (TARGET VALUE):**
 Currency: {receipt_data.currency}
-Subtotal: {receipt_data.subtotal}
-Tax: {receipt_data.tax}
-Tip: {receipt_data.tip}
-Grand Total: {receipt_data.grand_total}
+Total: {receipt_data.total}
 
-**Current Split (MAY HAVE ERRORS):**
-{participants_text}
+**Current Split (Python-calculated totals):**
+{participants_formatted}
 
-**Calculated Sums from Participants:**
-Sum of subtotals: {participants_subtotal} (should be {receipt_data.subtotal})
-Sum of tax shares: {participants_tax} (should be {receipt_data.tax})
-Sum of tip shares: {participants_tip} (should be {receipt_data.tip})
-Sum of totals: {participants_total} (should be {receipt_data.grand_total})
+**Sum of participant totals: {participants_total}**
+**Difference from receipt total: {total_diff}**
 
 **Task:**
-First, identify any discrepancies between the participant sums and the receipt totals.
+The sum of participant totals does not match the receipt total.
 
-Then, refine the split to ensure:
-1. Sum of all participant subtotals EXACTLY equals {receipt_data.subtotal}
-2. Sum of all participant tax shares EXACTLY equals {receipt_data.tax}
-3. Sum of all participant tip shares EXACTLY equals {receipt_data.tip}
-4. Sum of all participant totals EXACTLY equals {receipt_data.grand_total}
+Analyze the item assignments and refine them to ensure:
+1. All receipt items are assigned to participants
+2. For shared items, numerators/denominators add up correctly (e.g., 2 people sharing = each gets 1/2)
+3. The sum of calculated totals matches the receipt total
 
-Adjust values proportionally to fix any rounding errors. Keep item assignments the same.
+DO NOT calculate totals yourself - only adjust item assignments (numerators/denominators).
+The system will recalculate totals based on receipt prices.
 
 Output ONLY a valid JSON object with this structure (no markdown, no explanations):
 {{
   "participants": [
     {{
       "name": "Person Name",
-      "items": ["item1", "item2"],
-      "subtotal": 25.50,
-      "tax_share": 2.30,
-      "tip_share": 5.10,
-      "total": 32.90
+      "items": [
+        {{
+          "item_name": "item name from receipt",
+          "item_numerator": 1,
+          "item_denominator": 2
+        }}
+      ]
     }}
   ],
   "explanation": "Brief explanation of what was adjusted"
@@ -424,7 +463,7 @@ Output ONLY a valid JSON object with this structure (no markdown, no explanation
         # Extract and parse response
         response_text = message.content[0].text if message.content else ""
         full_response = "{" + response_text
-        logger.debug(f"Claude verification response: {full_response}")
+        logger.info(f"Claude verification response: {full_response}")
 
         json_text = extract_json_from_response(full_response)
 
@@ -432,31 +471,54 @@ Output ONLY a valid JSON object with this structure (no markdown, no explanation
             refined_data = json.loads(json_text)
 
             # Build refined ParticipantShare objects
-            refined_participants = [
-                ParticipantShare(
-                    name=p["name"],
-                    items=p["items"],
-                    subtotal=Decimal(str(p["subtotal"])),
-                    tax_share=Decimal(str(p["tax_share"])),
-                    tip_share=Decimal(str(p["tip_share"])),
-                    total=Decimal(str(p["total"])),
+            refined_participants = []
+            for p in refined_data["participants"]:
+                # Build ParticipantItem objects
+                participant_items = [
+                    ParticipantItem(
+                        item_name=item["item_name"],
+                        item_numerator=item["item_numerator"],
+                        item_denominator=item["item_denominator"],
+                    )
+                    for item in p["items"]
+                ]
+
+                refined_participants.append(
+                    ParticipantShare(
+                        name=p["name"],
+                        items=participant_items,
+                    )
                 )
-                for p in refined_data["participants"]
-            ]
 
             # Build refined BillSplit
             refined_split = BillSplit(
                 participants=refined_participants,
                 receipt_items=receipt_data.items,
                 currency=receipt_data.currency,
-                subtotal=receipt_data.subtotal,
-                tax=receipt_data.tax,
-                tip=receipt_data.tip,
-                grand_total=receipt_data.grand_total,
+                total=receipt_data.total,
             )
 
+            # Recalculate totals after refinement to verify it worked
+            refined_totals: dict[str, Decimal] = {}
+            for participant in refined_split.participants:
+                try:
+                    refined_totals[participant.name] = participant.calculate_total(receipt_data.items)
+                except ValueError as e:
+                    logger.error(f"Refinement failed - item matching error for {participant.name}: {e}")
+                    return (bill_split, False, f"Refinement failed: {e}")
+
+            refined_total_sum = sum(refined_totals.values())
+            refined_diff = abs(refined_total_sum - receipt_data.total)
+
+            # Log the refinement results
+            logger.info(f"Refined total sum: {refined_total_sum}, Receipt total: {receipt_data.total}, Diff: {refined_diff}")
+
             explanation = refined_data.get("explanation", "Split refined for accuracy")
-            logger.info(f"Split refined: {explanation}")
+            if refined_diff > tolerance:
+                explanation += f" (Note: Refinement reduced error from {total_diff} to {refined_diff})"
+                logger.warning(f"Refinement did not fully resolve discrepancy. Remaining diff: {refined_diff}")
+            else:
+                logger.info("Refinement successful - totals now match within tolerance")
 
             return (refined_split, True, explanation)
 

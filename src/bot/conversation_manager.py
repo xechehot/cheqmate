@@ -3,19 +3,19 @@
 import logging
 from typing import Dict
 
-from src.models.conversation_state import BillSession
+from src.models.agent_state import AgentBillSession
 
 logger = logging.getLogger(__name__)
 
 
 class ConversationManager:
-    """Manages conversation state for multiple users."""
+    """Manages conversation state for multiple users with agent support."""
 
     def __init__(self) -> None:
         """Initialize the conversation manager with empty state."""
-        self._sessions: Dict[int, BillSession] = {}
+        self._sessions: Dict[int, AgentBillSession] = {}
 
-    def get_session(self, chat_id: int) -> BillSession:
+    def get_session(self, chat_id: int) -> AgentBillSession:
         """
         Get or create a session for a chat.
 
@@ -23,11 +23,11 @@ class ConversationManager:
             chat_id: Telegram chat ID
 
         Returns:
-            BillSession for the chat
+            AgentBillSession for the chat
         """
         if chat_id not in self._sessions:
-            logger.debug(f"Creating new session for chat {chat_id}")
-            self._sessions[chat_id] = BillSession()
+            logger.debug(f"Creating new agent session for chat {chat_id}")
+            self._sessions[chat_id] = AgentBillSession()
         return self._sessions[chat_id]
 
     def clear_session(self, chat_id: int) -> None:

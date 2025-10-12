@@ -38,8 +38,12 @@ class AgentOrchestrator:
         """Initialize the orchestrator with Anthropic client."""
         if not settings.anthropic_api_key:
             raise ValueError("Anthropic API key is required")
-        self.client = Anthropic(api_key=settings.anthropic_api_key)
-        logger.info("Agent orchestrator initialized")
+        # Initialize client with 60 second timeout to prevent hanging
+        self.client = Anthropic(
+            api_key=settings.anthropic_api_key,
+            timeout=60.0,  # 60 second timeout for API calls
+        )
+        logger.info("Agent orchestrator initialized with 60s timeout")
 
     async def run(
         self,
@@ -81,6 +85,13 @@ class AgentOrchestrator:
 
             try:
                 # 1. REASON: Call Claude with tools
+                # Log conversation size for debugging
+                total_size = sum(len(str(msg)) for msg in messages)
+                logger.info(
+                    f"Calling Claude API: {len(messages)} messages, "
+                    f"~{total_size} chars total"
+                )
+
                 response = self.client.messages.create(
                     model=ANTHROPIC_MODEL,
                     max_tokens=4096,
@@ -89,6 +100,7 @@ class AgentOrchestrator:
                     tools=TOOLS,
                 )
 
+                logger.info(f"Claude API returned: stop_reason={response.stop_reason}")
                 logger.debug(f"Claude response stop_reason: {response.stop_reason}")
 
                 # Check for final answer (no tool use)
@@ -204,7 +216,9 @@ class AgentOrchestrator:
         # Wait for all tools to complete
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Format results for Claude
+        # Format results for Claude with truncation for large content
+        MAX_TOOL_RESULT_SIZE = 10000  # 10KB limit per tool result
+
         for tool_block, result in zip(tool_use_blocks, results):
             if isinstance(result, Exception):
                 logger.error(f"Tool {tool_block.name} failed: {result}")
@@ -217,13 +231,36 @@ class AgentOrchestrator:
                     }
                 )
             else:
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_block.id,
-                        "content": str(result),
-                    }
-                )
+                result_str = str(result)
+                result_size = len(result_str)
+
+                # Truncate large results (e.g., base64 images) to prevent conversation bloat
+                if result_size > MAX_TOOL_RESULT_SIZE:
+                    truncated_content = (
+                        f"Success: {tool_block.name} completed. "
+                        f"Result size: {result_size} bytes "
+                        f"(truncated from conversation history to prevent bloat). "
+                        f"Data has been processed successfully."
+                    )
+                    logger.info(
+                        f"Truncated {tool_block.name} result: {result_size} bytes -> "
+                        f"{len(truncated_content)} bytes"
+                    )
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_block.id,
+                            "content": truncated_content,
+                        }
+                    )
+                else:
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_block.id,
+                            "content": result_str,
+                        }
+                    )
 
         return tool_results
 

@@ -9,7 +9,13 @@ from decimal import Decimal
 from anthropic import Anthropic
 
 from src.config import settings
-from src.models.bill import BillSplit, ParticipantItem, ParticipantShare, ReceiptData, ReceiptItem
+from src.models.bill import (
+    BillSplit,
+    ParticipantItem,
+    ParticipantShare,
+    ReceiptData,
+    ReceiptItem,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +189,9 @@ If unclear, use USD as default."""
                 total=Decimal(str(data["total"])),
             )
 
-            logger.info(f"Extracted {len(items)} items from receipt in {receipt_data.currency}")
+            logger.info(
+                f"Extracted {len(items)} items from receipt in {receipt_data.currency}"
+            )
             return receipt_data
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.error(f"Failed to parse receipt data: {e}")
@@ -191,7 +199,10 @@ If unclear, use USD as default."""
             raise ValueError(f"Failed to extract receipt items: {e}")
 
     async def split_bill(
-        self, participant_description: str, receipt_data: ReceiptData, image_bytes: bytes
+        self,
+        participant_description: str,
+        receipt_data: ReceiptData,
+        image_bytes: bytes,
     ) -> BillSplit:
         """
         Split the bill among participants based on description and receipt data.
@@ -212,7 +223,10 @@ If unclear, use USD as default."""
 
         # Format receipt items for prompt
         items_text = "\n".join(
-            [f"- {item.name}: {item.price} (x{item.quantity})" for item in receipt_data.items]
+            [
+                f"- {item.name}: {item.price} (x{item.quantity})"
+                for item in receipt_data.items
+            ]
         )
 
         # Create structured prompt for bill splitting
@@ -331,7 +345,9 @@ Important:
                 total=receipt_data.total,
             )
 
-            logger.info(f"Successfully split bill among {len(participants)} participants")
+            logger.info(
+                f"Successfully split bill among {len(participants)} participants"
+            )
             return bill_split
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
@@ -339,7 +355,9 @@ Important:
             logger.error(f"Raw response: {full_response}")
             raise ValueError(f"Failed to split bill: {e}")
 
-    async def verify_and_refine_split(self, bill_split: BillSplit, receipt_data: ReceiptData) -> tuple[BillSplit, bool, str]:
+    async def verify_and_refine_split(
+        self, bill_split: BillSplit, receipt_data: ReceiptData
+    ) -> tuple[BillSplit, bool, str]:
         """
         Verify the bill split is mathematically correct and refine if needed.
 
@@ -402,10 +420,12 @@ Important:
         participants_formatted = "\n".join(participants_text)
 
         # Format receipt items for reference
-        receipt_items_text = "\n".join([
-            f"- {item.name}: {item.price} (x{item.quantity}) = {item.total_price}"
-            for item in receipt_data.items
-        ])
+        receipt_items_text = "\n".join(
+            [
+                f"- {item.name}: {item.price} (x{item.quantity}) = {item.total_price}"
+                for item in receipt_data.items
+            ]
+        )
 
         prompt = f"""You are verifying a restaurant bill split for mathematical accuracy.
 
@@ -502,21 +522,29 @@ Output ONLY a valid JSON object with this structure (no markdown, no explanation
             refined_totals: dict[str, Decimal] = {}
             for participant in refined_split.participants:
                 try:
-                    refined_totals[participant.name] = participant.calculate_total(receipt_data.items)
+                    refined_totals[participant.name] = participant.calculate_total(
+                        receipt_data.items
+                    )
                 except ValueError as e:
-                    logger.error(f"Refinement failed - item matching error for {participant.name}: {e}")
+                    logger.error(
+                        f"Refinement failed - item matching error for {participant.name}: {e}"
+                    )
                     return (bill_split, False, f"Refinement failed: {e}")
 
             refined_total_sum = sum(refined_totals.values())
             refined_diff = abs(refined_total_sum - receipt_data.total)
 
             # Log the refinement results
-            logger.info(f"Refined total sum: {refined_total_sum}, Receipt total: {receipt_data.total}, Diff: {refined_diff}")
+            logger.info(
+                f"Refined total sum: {refined_total_sum}, Receipt total: {receipt_data.total}, Diff: {refined_diff}"
+            )
 
             explanation = refined_data.get("explanation", "Split refined for accuracy")
             if refined_diff > tolerance:
                 explanation += f" (Note: Refinement reduced error from {total_diff} to {refined_diff})"
-                logger.warning(f"Refinement did not fully resolve discrepancy. Remaining diff: {refined_diff}")
+                logger.warning(
+                    f"Refinement did not fully resolve discrepancy. Remaining diff: {refined_diff}"
+                )
             else:
                 logger.info("Refinement successful - totals now match within tolerance")
 

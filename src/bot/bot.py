@@ -4,9 +4,19 @@ import logging
 from typing import Final
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-from src.bot.handlers import new_bill_command, photo_message_handler, text_message_handler
+from src.bot.handlers import (
+    new_bill_command,
+    photo_message_handler,
+    text_message_handler,
+)
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -69,7 +79,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle errors in the bot."""
-    logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
+    logger.error(
+        f"Exception while handling an update: {context.error}", exc_info=context.error
+    )
 
 
 def create_bot() -> Application:
@@ -84,7 +96,9 @@ def create_bot() -> Application:
 
     # Register message handlers (order matters - more specific first)
     application.add_handler(MessageHandler(filters.PHOTO, photo_message_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler)
+    )
 
     # Register error handler
     application.add_error_handler(error_handler)

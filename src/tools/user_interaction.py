@@ -6,7 +6,6 @@ These tools handle bidirectional communication with users:
 """
 
 import logging
-from typing import Any
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -55,7 +54,9 @@ async def request_participant_description(
     logger.info(f"Requested participant description from chat {chat_id}")
 
 
-async def request_receipt_photo(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def request_receipt_photo(
+    chat_id: int, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """
     Ask user to send a photo of the receipt.
 

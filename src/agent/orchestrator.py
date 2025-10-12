@@ -107,9 +107,7 @@ class AgentOrchestrator:
                         # Log it for debugging
                         logger.debug(f"Agent final message: {final_text}")
                     else:
-                        logger.info(
-                            f"Agent completed task silently for chat {chat_id}"
-                        )
+                        logger.info(f"Agent completed task silently for chat {chat_id}")
 
                     # Task complete
                     break
@@ -165,7 +163,9 @@ class AgentOrchestrator:
                 break
 
         if iteration >= MAX_ITERATIONS:
-            logger.error(f"Agent hit max iterations ({MAX_ITERATIONS}) for chat {chat_id}")
+            logger.error(
+                f"Agent hit max iterations ({MAX_ITERATIONS}) for chat {chat_id}"
+            )
             from src.tools.user_interaction import send_error_message
 
             await send_error_message(
@@ -351,7 +351,6 @@ class AgentOrchestrator:
         chat_id = tool_context["chat_id"]
         update = tool_context["update"]
         telegram_context = tool_context["telegram_context"]
-        session = tool_context["session"]
 
         # Determine arguments based on tool signature
         sig = inspect.signature(tool_func)
@@ -376,9 +375,7 @@ class AgentOrchestrator:
                 # Remove _json suffix for actual parameter name
                 actual_param = param_name.replace("_json", "")
                 if actual_param == "receipt_data":
-                    kwargs[actual_param] = ReceiptData.model_validate_json(
-                        param_value
-                    )
+                    kwargs[actual_param] = ReceiptData.model_validate_json(param_value)
                 elif actual_param == "bill_split":
                     kwargs[actual_param] = BillSplit.model_validate_json(param_value)
                 else:

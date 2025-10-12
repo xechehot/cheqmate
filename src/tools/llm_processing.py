@@ -63,7 +63,9 @@ async def create_initial_bill_split(
     """
     service = AnthropicService()
     bill_split = await service.split_bill(description, receipt_data, image_bytes)
-    logger.info(f"Created initial split with {len(bill_split.participants)} participants")
+    logger.info(
+        f"Created initial split with {len(bill_split.participants)} participants"
+    )
     return bill_split
 
 

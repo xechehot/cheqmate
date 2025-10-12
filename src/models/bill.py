@@ -81,7 +81,9 @@ class ParticipantItem(BaseModel):
 
     item_name: str = Field(description="Name of the item from the receipt")
     item_numerator: int = Field(description="How many parts this person gets (e.g., 1)")
-    item_denominator: int = Field(description="Total parts the item is split into (e.g., 2 if shared by 2 people)")
+    item_denominator: int = Field(
+        description="Total parts the item is split into (e.g., 2 if shared by 2 people)"
+    )
 
     @field_validator("item_denominator")
     @classmethod
@@ -139,7 +141,9 @@ def find_receipt_item(
         # Try multiple fuzzy matching strategies
         ratio_score = fuzz.ratio(item_name.lower(), receipt_item.name.lower())
         partial_score = fuzz.partial_ratio(item_name.lower(), receipt_item.name.lower())
-        token_sort_score = fuzz.token_sort_ratio(item_name.lower(), receipt_item.name.lower())
+        token_sort_score = fuzz.token_sort_ratio(
+            item_name.lower(), receipt_item.name.lower()
+        )
 
         # Use the highest score from all strategies
         score = max(ratio_score, partial_score, token_sort_score)
@@ -199,7 +203,9 @@ class ParticipantShare(BaseModel):
 class BillSplit(BaseModel):
     """Complete bill split result with all participants."""
 
-    participants: list[ParticipantShare] = Field(description="List of all participants and their shares")
+    participants: list[ParticipantShare] = Field(
+        description="List of all participants and their shares"
+    )
     receipt_items: list[ReceiptItem] = Field(description="All items from the receipt")
     currency: str = Field(description="ISO 4217 currency code (e.g., USD, KZT, EUR)")
     total: Decimal = Field(description="Total of the bill")
@@ -231,11 +237,16 @@ class BillSplit(BaseModel):
                 # Show items with detailed price breakdown
                 for participant_item in participant.items:
                     # Find matching receipt item
-                    matched_item = find_receipt_item(participant_item.item_name, self.receipt_items)
+                    matched_item = find_receipt_item(
+                        participant_item.item_name, self.receipt_items
+                    )
 
                     if matched_item:
                         # Format fraction for display
-                        if participant_item.item_numerator == participant_item.item_denominator:
+                        if (
+                            participant_item.item_numerator
+                            == participant_item.item_denominator
+                        ):
                             fraction_display = "1"
                         else:
                             fraction_display = f"{participant_item.item_numerator}/{participant_item.item_denominator}"
@@ -250,7 +261,9 @@ class BillSplit(BaseModel):
                         )
                     else:
                         # Fallback if item not found
-                        lines.append(f"• {participant_item.item_name} (not found in receipt)")
+                        lines.append(
+                            f"• {participant_item.item_name} (not found in receipt)"
+                        )
 
             # Calculate and display total
             try:

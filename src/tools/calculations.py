@@ -31,9 +31,7 @@ def calculate_all_participant_totals(bill_split: BillSplit) -> dict[str, Decimal
         try:
             calculated_total = participant.calculate_total(bill_split.receipt_items)
             participant_totals[participant.name] = calculated_total
-            logger.debug(
-                f"Calculated total for {participant.name}: {calculated_total}"
-            )
+            logger.debug(f"Calculated total for {participant.name}: {calculated_total}")
         except ValueError as e:
             logger.error(f"Calculation error for {participant.name}: {e}")
             raise

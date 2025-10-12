@@ -58,9 +58,7 @@ class AgentBillSession(BillSession):
             bill_split: Complete bill split with participant assignments
         """
         self.bill_split = bill_split
-        logger.info(
-            f"Stored bill split: {len(bill_split.participants)} participants"
-        )
+        logger.info(f"Stored bill split: {len(bill_split.participants)} participants")
 
     def increment_turn(self) -> None:
         """Increment agent turn counter for tracking."""

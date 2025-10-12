@@ -25,11 +25,15 @@ async def new_bill_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await handle_new_bill(update, context)
 
 
-async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def text_message_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Handle text messages using agent orchestrator."""
     await handle_text_message(update, context)
 
 
-async def photo_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def photo_message_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Handle photo messages using agent orchestrator."""
     await handle_photo_message(update, context)

@@ -19,21 +19,38 @@ from src.services.anthropic_service import (
 logger = logging.getLogger(__name__)
 
 
-async def extract_receipt_ocr(image_bytes: bytes) -> ReceiptData:
+async def extract_receipt_ocr(
+    chat_id: int, image_bytes: bytes | None = None
+) -> ReceiptData:
     """
     Extract items, prices, totals, and currency from a receipt image using Claude Vision.
 
     This is a wrapper around AnthropicService.extract_receipt_items.
+    If image_bytes is not provided, it will be retrieved from the session cache
+    (requires download_telegram_photo to have been called first).
 
     Args:
-        image_bytes: Raw bytes of the receipt image
+        chat_id: Telegram chat ID (for session retrieval)
+        image_bytes: Raw bytes of the receipt image (optional - uses cached if not provided)
 
     Returns:
         ReceiptData object with all extracted information including currency
 
     Raises:
-        ValueError: If OCR extraction fails
+        ValueError: If OCR extraction fails or no image bytes available
     """
+    # Auto-retrieve from session if not provided
+    if image_bytes is None:
+        from src.bot.conversation_manager import conversation_manager
+
+        session = conversation_manager.get_session(chat_id)
+        if not session.has_image_bytes():
+            raise ValueError(
+                "No image bytes available. Call download_telegram_photo first or provide image_bytes parameter."
+            )
+        image_bytes = session.image_bytes
+        logger.info("Retrieved cached image bytes from session for OCR")
+
     service = AnthropicService()
     receipt_data = await service.extract_receipt_items(image_bytes)
     logger.info(

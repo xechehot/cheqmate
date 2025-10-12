@@ -129,22 +129,39 @@ async def send_error_message(
 
 
 async def download_telegram_photo(
-    file_id: str, context: ContextTypes.DEFAULT_TYPE
+    chat_id: int, file_id: str, context: ContextTypes.DEFAULT_TYPE
 ) -> bytes:
     """
-    Download a photo from Telegram by file ID.
+    Download a photo from Telegram by file ID and cache in session.
 
     Args:
+        chat_id: Telegram chat ID (for session caching)
         file_id: Telegram file ID
         context: Telegram context
 
     Returns:
         Raw image bytes
+
+    Raises:
+        Exception: If download fails
     """
-    file = await context.bot.get_file(file_id)
-    image_bytes = await file.download_as_bytearray()
-    logger.debug(f"Downloaded photo with file_id {file_id}")
-    return bytes(image_bytes)
+    try:
+        logger.info(f"Downloading photo with file_id: {file_id}")
+        file = await context.bot.get_file(file_id)
+        image_bytearray = await file.download_as_bytearray()
+        image_bytes = bytes(image_bytearray)
+        image_size = len(image_bytes)
+        logger.info(f"Downloaded photo: {image_size} bytes ({image_size/1024:.1f} KB)")
+
+        # Cache image bytes in session for later use
+        from src.bot.conversation_manager import conversation_manager
+        session = conversation_manager.get_session(chat_id)
+        session.store_image_bytes(image_bytes)
+
+        return image_bytes
+    except Exception as e:
+        logger.error(f"Failed to download photo {file_id}: {e}", exc_info=True)
+        raise
 
 
 def get_latest_text_message(update: Update) -> str | None:

@@ -23,6 +23,7 @@ class AgentBillSession(BillSession):
         # These avoid redundant expensive operations (OCR, split creation)
         self.receipt_data: ReceiptData | None = None
         self.bill_split: BillSplit | None = None
+        self.image_bytes: bytes | None = None  # Cache downloaded receipt image
 
         # Agent execution tracking (for debugging/observability)
         self.agent_turns: int = 0
@@ -33,6 +34,7 @@ class AgentBillSession(BillSession):
         super().reset()
         self.receipt_data = None
         self.bill_split = None
+        self.image_bytes = None
         self.agent_turns = 0
         self.last_error = None
         logger.debug("Agent session reset")
@@ -82,3 +84,20 @@ class AgentBillSession(BillSession):
     def has_bill_split(self) -> bool:
         """Check if bill split has been created."""
         return self.bill_split is not None
+
+    def store_image_bytes(self, image_bytes: bytes) -> None:
+        """
+        Store downloaded image bytes in session for reuse.
+
+        Args:
+            image_bytes: Raw image bytes from Telegram photo
+        """
+        self.image_bytes = image_bytes
+        logger.info(
+            f"Stored image bytes in session: {len(image_bytes)} bytes "
+            f"({len(image_bytes)/1024:.1f} KB)"
+        )
+
+    def has_image_bytes(self) -> bool:
+        """Check if image bytes are cached in session."""
+        return self.image_bytes is not None

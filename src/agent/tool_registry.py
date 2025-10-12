@@ -113,7 +113,7 @@ TOOLS: list[dict[str, Any]] = [
     # ===== TELEGRAM UTILITY TOOLS (3) =====
     {
         "name": "download_telegram_photo",
-        "description": "Download a photo from Telegram by file ID and return the raw image bytes encoded as base64.",
+        "description": "Download a photo from Telegram by file ID. Image bytes are automatically cached in session for use by extract_receipt_ocr. Returns success confirmation.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -138,16 +138,11 @@ TOOLS: list[dict[str, Any]] = [
     # ===== LLM PROCESSING TOOLS (3) =====
     {
         "name": "extract_receipt_ocr",
-        "description": "Extract items, prices, currency, and totals from a receipt image using Claude Vision OCR. Requires the raw image bytes.",
+        "description": "Extract items, prices, currency, and totals from a receipt image using Claude Vision OCR. Automatically uses cached image if download_telegram_photo was called previously. No parameters needed - just call it after downloading the photo.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "image_bytes_base64": {
-                    "type": "string",
-                    "description": "Base64-encoded image bytes of the receipt (get from download_telegram_photo)",
-                }
-            },
-            "required": ["image_bytes_base64"],
+            "properties": {},
+            "required": [],
         },
     },
     {

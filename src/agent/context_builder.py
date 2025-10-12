@@ -60,6 +60,11 @@ class AgentContext:
         """Check if bill split has been created."""
         return self.session.has_bill_split()
 
+    @property
+    def has_image_bytes(self) -> bool:
+        """Check if image bytes are cached."""
+        return self.session.has_image_bytes()
+
     def get_state_summary(self) -> str:
         """
         Generate human-readable state summary for agent prompt.
@@ -80,8 +85,9 @@ class AgentContext:
 
         # Check receipt photo
         if self.has_receipt_file_id:
+            cached_status = " [CACHED]" if self.has_image_bytes else ""
             lines.append(
-                f"- Receipt photo: UPLOADED (file_id: {self.session.receipt_file_id})"
+                f"- Receipt photo: UPLOADED (file_id: {self.session.receipt_file_id}){cached_status}"
             )
         else:
             lines.append("- Receipt photo: NOT UPLOADED")
@@ -150,9 +156,9 @@ You have access to 20 tools organized into categories:
 
 2. **Processing Phase**: Once you have both inputs:
    a. If receipt photo file_id exists but OCR NOT DONE:
-      - Use `download_telegram_photo` to get image bytes (base64 encoded)
-      - Use `extract_receipt_ocr` to extract items/prices/currency
-      - Store result for later use
+      - Use `download_telegram_photo` to download and cache image
+      - Use `extract_receipt_ocr` (no parameters - uses cached image automatically)
+      - The OCR result is automatically stored in session
    b. If OCR is COMPLETED but bill split NOT CREATED:
       - Use `create_initial_bill_split` with description, receipt data, and image bytes
       - This assigns items to participants using fractional ownership

@@ -10,6 +10,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 from decimal import Decimal
 from typing import Any
 
@@ -63,6 +64,7 @@ class AgentOrchestrator:
             new_message: Optional new text message or description of user action
         """
         chat_id = agent_context.chat_id
+        agent_start_time = time.time()
         logger.info(f"Starting agent orchestration for chat {chat_id}")
 
         # Increment turn counter
@@ -79,6 +81,7 @@ class AgentOrchestrator:
         iteration = 0
         while iteration < MAX_ITERATIONS:
             iteration += 1
+            iteration_start_time = time.time()
             logger.info(
                 f"Agent iteration {iteration}/{MAX_ITERATIONS} for chat {chat_id}"
             )
@@ -153,6 +156,16 @@ class AgentOrchestrator:
 
                 messages.append({"role": "user", "content": tool_results})
 
+                # Log iteration duration
+                iteration_duration = time.time() - iteration_start_time
+                logger.info(
+                    f"Iteration {iteration} completed in {iteration_duration:.2f}s"
+                )
+                if iteration_duration > 10.0:
+                    logger.warning(
+                        f"Slow iteration detected: {iteration_duration:.2f}s (threshold: 10s)"
+                    )
+
             except Exception as e:
                 logger.error(
                     f"Error in agent loop for chat {chat_id}: {e}", exc_info=True
@@ -186,6 +199,13 @@ class AgentOrchestrator:
                 context=agent_context.telegram_context,
             )
             agent_context.session.reset()
+
+        # Log total agent run duration
+        total_duration = time.time() - agent_start_time
+        logger.info(
+            f"Agent orchestration completed for chat {chat_id} in {total_duration:.2f}s "
+            f"({iteration} iterations)"
+        )
 
     async def _execute_tools(
         self,
@@ -285,6 +305,7 @@ class AgentOrchestrator:
         tool_name = tool_block.name
         tool_input = tool_block.input
 
+        tool_start_time = time.time()
         logger.info(f"Executing tool: {tool_name}")
         logger.debug(f"Tool input: {tool_input}")
 
@@ -355,6 +376,14 @@ class AgentOrchestrator:
             tool_input=tool_input,
             tool_context=tool_context,
         )
+
+        # Log tool execution duration
+        tool_duration = time.time() - tool_start_time
+        logger.info(f"Tool {tool_name} completed in {tool_duration:.2f}s")
+        if tool_duration > 5.0:
+            logger.warning(
+                f"Slow tool execution detected: {tool_name} took {tool_duration:.2f}s (threshold: 5s)"
+            )
 
         return result
 

@@ -71,6 +71,38 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["error"],
         },
     },
+    {
+        "name": "send_formatted_receipt",
+        "description": "Send a formatted receipt summary to the user showing OCR-extracted items, prices, and totals. Use this IMMEDIATELY after extract_receipt_ocr to let the user verify the recognized receipt before proceeding with bill splitting.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "receipt_data_json": {
+                    "type": "string",
+                    "description": "JSON string of ReceiptData object (from extract_receipt_ocr)",
+                }
+            },
+            "required": ["receipt_data_json"],
+        },
+    },
+    {
+        "name": "send_formatted_split",
+        "description": "Send a formatted bill split summary to the user showing participant assignments and calculated totals. Use this to show intermediate results (draft splits, refined splits) to provide transparency and progress feedback. Call IMMEDIATELY after create_initial_bill_split and after refine_split_with_llm.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "bill_split_json": {
+                    "type": "string",
+                    "description": "JSON string of BillSplit object",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Title for the split summary (e.g., 'Bill Split - Draft', 'Bill Split - Refined'). Default: 'Bill Split - Draft'",
+                },
+            },
+            "required": ["bill_split_json"],
+        },
+    },
     # ===== STATE MANAGEMENT TOOLS (4) =====
     {
         "name": "get_participant_description",

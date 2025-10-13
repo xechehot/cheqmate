@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 logger = logging.getLogger(__name__)
 
 
-# SENDING TOOLS (6 tools)
+# SENDING TOOLS (8 tools)
 
 
 async def send_message(
@@ -23,7 +23,12 @@ async def send_message(
     parse_mode: str = "Markdown",
 ) -> None:
     """
-    Send a generic message to the user.
+    Send a generic message to the user with error handling.
+
+    This function includes:
+    - Message length validation (Telegram max: 4096 chars)
+    - Markdown parsing error fallback to plain text
+    - Automatic truncation for very long messages
 
     Args:
         chat_id: Telegram chat ID
@@ -31,8 +36,37 @@ async def send_message(
         context: Telegram context
         parse_mode: Message formatting (default: Markdown)
     """
-    await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
-    logger.debug(f"Sent message to chat {chat_id}")
+    from telegram.error import BadRequest
+
+    # Telegram's message length limit
+    MAX_MESSAGE_LENGTH = 4000  # Leave buffer for safety (actual limit is 4096)
+
+    # Truncate if message is too long
+    if len(text) > MAX_MESSAGE_LENGTH:
+        logger.warning(
+            f"Message length {len(text)} exceeds {MAX_MESSAGE_LENGTH}, truncating"
+        )
+        text = text[:MAX_MESSAGE_LENGTH] + "\n\n... (message truncated)"
+
+    # Try to send with Markdown, fall back to plain text if parsing fails
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id, text=text, parse_mode=parse_mode
+        )
+        logger.debug(f"Sent message to chat {chat_id}")
+    except BadRequest as e:
+        # Check if this is a Markdown parsing error
+        if "can't parse entities" in str(e).lower():
+            logger.warning(
+                f"Markdown parsing failed for chat {chat_id}, falling back to plain text. "
+                f"Error: {e}"
+            )
+            # Retry without Markdown
+            await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=None)
+            logger.info(f"Sent message as plain text to chat {chat_id}")
+        else:
+            # Re-raise if it's a different kind of BadRequest
+            raise
 
 
 async def request_participant_description(
@@ -125,6 +159,82 @@ async def send_error_message(
     logger.error(f"Sent error message to chat {chat_id}: {error}")
 
 
+async def send_formatted_receipt(
+    chat_id: int, receipt_data_json: str, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Send a formatted receipt summary to the user.
+
+    This tool displays the OCR-extracted receipt data in a human-readable format,
+    showing all items, prices, and totals. Use this after extract_receipt_ocr
+    to let the user verify the recognized receipt before proceeding with splitting.
+
+    Args:
+        chat_id: Telegram chat ID
+        receipt_data_json: JSON string of ReceiptData object
+        context: Telegram context
+    """
+    from src.models.bill import ReceiptData
+
+    try:
+        # Parse JSON to ReceiptData object
+        receipt_data = ReceiptData.model_validate_json(receipt_data_json)
+
+        # Format using the model's format_summary method
+        formatted_text = receipt_data.format_summary()
+
+        # Send to user with Markdown formatting
+        await send_message(chat_id, formatted_text, context, parse_mode="Markdown")
+
+        logger.info(
+            f"Sent formatted receipt to chat {chat_id}: "
+            f"{len(receipt_data.items)} items, total {receipt_data.total} {receipt_data.currency}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to send formatted receipt to chat {chat_id}: {e}")
+        raise ValueError(f"Failed to format and send receipt: {e}")
+
+
+async def send_formatted_split(
+    chat_id: int,
+    bill_split_json: str,
+    context: ContextTypes.DEFAULT_TYPE,
+    title: str = "Bill Split - Draft",
+) -> None:
+    """
+    Send a formatted bill split summary to the user.
+
+    This tool displays the bill split with participant assignments and calculated totals.
+    Use this to show intermediate results (draft splits) before refinement or verification,
+    allowing the user to see progress and provide feedback.
+
+    Args:
+        chat_id: Telegram chat ID
+        bill_split_json: JSON string of BillSplit object
+        context: Telegram context
+        title: Optional title for the split summary (default: "Bill Split - Draft")
+    """
+    from src.models.bill import BillSplit
+
+    try:
+        # Parse JSON to BillSplit object
+        bill_split = BillSplit.model_validate_json(bill_split_json)
+
+        # Format using the model's format_summary method
+        formatted_text = bill_split.format_summary(title=title)
+
+        # Send to user with Markdown formatting
+        await send_message(chat_id, formatted_text, context, parse_mode="Markdown")
+
+        logger.info(
+            f"Sent formatted split to chat {chat_id}: "
+            f"{len(bill_split.participants)} participants, total {bill_split.total} {bill_split.currency}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to send formatted split to chat {chat_id}: {e}")
+        raise ValueError(f"Failed to format and send bill split: {e}")
+
+
 # RECEIVING TOOLS (3 tools)
 
 
@@ -151,10 +261,13 @@ async def download_telegram_photo(
         image_bytearray = await file.download_as_bytearray()
         image_bytes = bytes(image_bytearray)
         image_size = len(image_bytes)
-        logger.info(f"Downloaded photo: {image_size} bytes ({image_size/1024:.1f} KB)")
+        logger.info(
+            f"Downloaded photo: {image_size} bytes ({image_size / 1024:.1f} KB)"
+        )
 
         # Cache image bytes in session for later use
         from src.bot.conversation_manager import conversation_manager
+
         session = conversation_manager.get_session(chat_id)
         session.store_image_bytes(image_bytes)
 

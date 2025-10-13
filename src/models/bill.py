@@ -4,6 +4,8 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.utils.markdown import escape_markdown
+
 # Currency symbol mapping for common currencies
 CURRENCY_SYMBOLS = {
     "USD": "$",
@@ -74,9 +76,11 @@ class ReceiptData(BaseModel):
         symbol = get_currency_symbol(self.currency)
         lines = ["📄 **Receipt Extracted:**\n"]
 
-        # Items
+        # Items (escape item names to prevent Markdown parsing errors)
         for item in self.items:
-            lines.append(f"• {item.name}: {symbol}{item.price:,.2f} (x{item.quantity})")
+            lines.append(
+                f"• {escape_markdown(item.name)}: {symbol}{item.price:,.2f} (x{item.quantity})"
+            )
 
         lines.append("")
 
@@ -227,10 +231,12 @@ class BillSplit(BaseModel):
         symbol = get_currency_symbol(self.currency)
         lines = [f"🧾 **{title}**\n"]
 
-        # Receipt items
+        # Receipt items (escape names to prevent Markdown parsing errors)
         lines.append("**Receipt Items:**")
         for item in self.receipt_items:
-            lines.append(f"• {item.name}: {symbol}{item.price:,.2f} (x{item.quantity})")
+            lines.append(
+                f"• {escape_markdown(item.name)}: {symbol}{item.price:,.2f} (x{item.quantity})"
+            )
 
         lines.append("")
 
@@ -241,10 +247,10 @@ class BillSplit(BaseModel):
         lines.append("---")
         lines.append("")
 
-        # Participant shares with calculated totals
+        # Participant shares with calculated totals (escape names to prevent Markdown errors)
         lines.append("**Individual Shares:**")
         for participant in self.participants:
-            lines.append(f"\n**{participant.name}:**")
+            lines.append(f"\n**{escape_markdown(participant.name)}:**")
             if participant.items:
                 # Show items with detailed price breakdown
                 for participant_item in participant.items:
@@ -266,15 +272,15 @@ class BillSplit(BaseModel):
                         # Calculate this item's cost for participant
                         item_cost = matched_item.total_price * participant_item.fraction
 
-                        # Display with full breakdown like receipt items
+                        # Display with full breakdown like receipt items (escape item name)
                         lines.append(
-                            f"• {matched_item.name}: {symbol}{matched_item.price:,.2f} "
+                            f"• {escape_markdown(matched_item.name)}: {symbol}{matched_item.price:,.2f} "
                             f"(x{matched_item.quantity}) × {fraction_display} = {symbol}{item_cost:,.2f}"
                         )
                     else:
-                        # Fallback if item not found
+                        # Fallback if item not found (escape item name)
                         lines.append(
-                            f"• {participant_item.item_name} (not found in receipt)"
+                            f"• {escape_markdown(participant_item.item_name)} (not found in receipt)"
                         )
 
             # Calculate and display total

@@ -1,9 +1,9 @@
 """Unit tests for user interaction tools.
 
-These tests cover the 9 user interaction functions with mocked Telegram bot.
+These tests cover the 11 user interaction functions with mocked Telegram bot.
 """
 
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 
@@ -15,6 +15,8 @@ from src.tools.user_interaction import (
     request_participant_description,
     request_receipt_photo,
     send_error_message,
+    send_formatted_receipt,
+    send_formatted_split,
     send_message,
     send_processing_status,
 )
@@ -51,6 +53,75 @@ class TestSendMessage:
         call_args = mock_telegram_context.bot.send_message.call_args
         assert call_args.kwargs["text"] == "**Bold** and *italic* text"
         assert call_args.kwargs["parse_mode"] == "Markdown"
+
+    @pytest.mark.asyncio
+    async def test_send_message_markdown_parsing_error_fallback(
+        self, mock_telegram_context
+    ):
+        """Test that bad Markdown falls back to plain text."""
+        from telegram.error import BadRequest
+
+        # First call with Markdown fails, second call without Markdown succeeds
+        mock_telegram_context.bot.send_message.side_effect = [
+            BadRequest("Can't parse entities: can't find end of entity"),
+            None,  # Second call succeeds
+        ]
+
+        await send_message(
+            chat_id=12345,
+            text="Bad_markdown_text",
+            context=mock_telegram_context,
+        )
+
+        # Should have been called twice: once with Markdown, once without
+        assert mock_telegram_context.bot.send_message.call_count == 2
+
+        # First call with Markdown
+        first_call = mock_telegram_context.bot.send_message.call_args_list[0]
+        assert first_call.kwargs["parse_mode"] == "Markdown"
+
+        # Second call without parse_mode (plain text)
+        second_call = mock_telegram_context.bot.send_message.call_args_list[1]
+        assert second_call.kwargs["parse_mode"] is None
+        assert second_call.kwargs["text"] == "Bad_markdown_text"
+
+    @pytest.mark.asyncio
+    async def test_send_message_other_bad_request_not_caught(
+        self, mock_telegram_context
+    ):
+        """Test that non-parsing BadRequest errors are re-raised."""
+        from telegram.error import BadRequest
+
+        mock_telegram_context.bot.send_message.side_effect = BadRequest(
+            "Chat not found"
+        )
+
+        with pytest.raises(BadRequest, match="Chat not found"):
+            await send_message(
+                chat_id=12345,
+                text="Test message",
+                context=mock_telegram_context,
+            )
+
+    @pytest.mark.asyncio
+    async def test_send_message_truncates_long_messages(self, mock_telegram_context):
+        """Test that very long messages are truncated."""
+        # Create a message longer than 4000 characters
+        long_message = "A" * 5000
+
+        await send_message(
+            chat_id=12345,
+            text=long_message,
+            context=mock_telegram_context,
+        )
+
+        mock_telegram_context.bot.send_message.assert_called_once()
+        call_args = mock_telegram_context.bot.send_message.call_args
+        sent_text = call_args.kwargs["text"]
+
+        # Should be truncated
+        assert len(sent_text) <= 4050  # 4000 + truncation message
+        assert "(message truncated)" in sent_text
 
 
 class TestRequestParticipantDescription:
@@ -152,17 +223,143 @@ class TestSendErrorMessage:
         assert "&lt;" in call_args.kwargs["text"] or "Error" in call_args.kwargs["text"]
 
 
+class TestSendFormattedReceipt:
+    """Tests for send_formatted_receipt function."""
+
+    @pytest.mark.asyncio
+    async def test_send_receipt_success(self, mock_telegram_context):
+        """Test sending formatted receipt."""
+        receipt_json = """
+        {
+            "items": [
+                {"name": "Burger", "price": "12.50", "quantity": 1},
+                {"name": "Fries", "price": "4.00", "quantity": 2}
+            ],
+            "currency": "USD",
+            "subtotal": "20.50",
+            "total": "23.50"
+        }
+        """
+
+        await send_formatted_receipt(
+            chat_id=12345,
+            receipt_data_json=receipt_json,
+            context=mock_telegram_context,
+        )
+
+        mock_telegram_context.bot.send_message.assert_called_once()
+        call_args = mock_telegram_context.bot.send_message.call_args
+        text = call_args.kwargs["text"]
+        assert "Receipt Extracted" in text or "Burger" in text
+        assert call_args.kwargs["parse_mode"] == "Markdown"
+
+    @pytest.mark.asyncio
+    async def test_send_receipt_invalid_json(self, mock_telegram_context):
+        """Test sending formatted receipt with invalid JSON."""
+        with pytest.raises(ValueError, match="Failed to format and send receipt"):
+            await send_formatted_receipt(
+                chat_id=12345,
+                receipt_data_json="invalid json",
+                context=mock_telegram_context,
+            )
+
+
+class TestSendFormattedSplit:
+    """Tests for send_formatted_split function."""
+
+    @pytest.mark.asyncio
+    async def test_send_split_success(self, mock_telegram_context):
+        """Test sending formatted bill split."""
+        split_json = """
+        {
+            "participants": [
+                {
+                    "name": "Alice",
+                    "items": [
+                        {"item_name": "Burger", "item_numerator": 1, "item_denominator": 1}
+                    ]
+                },
+                {
+                    "name": "Bob",
+                    "items": [
+                        {"item_name": "Fries", "item_numerator": 1, "item_denominator": 2}
+                    ]
+                }
+            ],
+            "receipt_items": [
+                {"name": "Burger", "price": "12.50", "quantity": 1},
+                {"name": "Fries", "price": "4.00", "quantity": 1}
+            ],
+            "currency": "USD",
+            "total": "16.50"
+        }
+        """
+
+        await send_formatted_split(
+            chat_id=12345,
+            bill_split_json=split_json,
+            context=mock_telegram_context,
+            title="Bill Split - Draft",
+        )
+
+        mock_telegram_context.bot.send_message.assert_called_once()
+        call_args = mock_telegram_context.bot.send_message.call_args
+        text = call_args.kwargs["text"]
+        assert "Bill Split" in text or "Alice" in text or "Bob" in text
+        assert call_args.kwargs["parse_mode"] == "Markdown"
+
+    @pytest.mark.asyncio
+    async def test_send_split_with_default_title(self, mock_telegram_context):
+        """Test sending formatted split with default title."""
+        split_json = """
+        {
+            "participants": [
+                {"name": "Alice", "items": []}
+            ],
+            "receipt_items": [],
+            "currency": "USD",
+            "total": "0.00"
+        }
+        """
+
+        await send_formatted_split(
+            chat_id=12345,
+            bill_split_json=split_json,
+            context=mock_telegram_context,
+        )
+
+        mock_telegram_context.bot.send_message.assert_called_once()
+        call_args = mock_telegram_context.bot.send_message.call_args
+        text = call_args.kwargs["text"]
+        assert "Draft" in text or "Bill Split" in text
+
+    @pytest.mark.asyncio
+    async def test_send_split_invalid_json(self, mock_telegram_context):
+        """Test sending formatted split with invalid JSON."""
+        with pytest.raises(ValueError, match="Failed to format and send bill split"):
+            await send_formatted_split(
+                chat_id=12345,
+                bill_split_json="invalid json",
+                context=mock_telegram_context,
+            )
+
+
 class TestDownloadTelegramPhoto:
     """Tests for download_telegram_photo function."""
 
     @pytest.mark.asyncio
-    async def test_download_photo_success(self, mock_telegram_context, mock_telegram_file, mock_conversation_manager):
+    async def test_download_photo_success(
+        self, mock_telegram_context, mock_telegram_file, mock_conversation_manager
+    ):
         """Test successful photo download."""
         from unittest.mock import patch
 
         mock_telegram_context.bot.get_file.return_value = mock_telegram_file
 
-        with patch("src.bot.conversation_manager.conversation_manager", mock_conversation_manager):
+        with patch(
+            "src.bot.conversation_manager.conversation_manager",
+            mock_conversation_manager,
+        ):
             result = await download_telegram_photo(
                 chat_id=12345,
                 file_id="file_abc123",
@@ -174,13 +371,18 @@ class TestDownloadTelegramPhoto:
         mock_telegram_file.download_as_bytearray.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_download_photo_failure(self, mock_telegram_context, mock_conversation_manager):
+    async def test_download_photo_failure(
+        self, mock_telegram_context, mock_conversation_manager
+    ):
         """Test photo download failure."""
         from unittest.mock import patch
 
         mock_telegram_context.bot.get_file.side_effect = Exception("Network error")
 
-        with patch("src.bot.conversation_manager.conversation_manager", mock_conversation_manager):
+        with patch(
+            "src.bot.conversation_manager.conversation_manager",
+            mock_conversation_manager,
+        ):
             with pytest.raises(Exception, match="Network error"):
                 await download_telegram_photo(
                     chat_id=12345,

@@ -545,6 +545,8 @@ class AgentOrchestrator:
             request_participant_description,
             request_receipt_photo,
             send_error_message,
+            send_formatted_receipt,
+            send_formatted_split,
             send_message,
             send_processing_status,
             # State management
@@ -572,6 +574,8 @@ class AgentOrchestrator:
             "ask_clarification_question": ask_clarification_question,
             "send_processing_status": send_processing_status,
             "send_error_message": send_error_message,
+            "send_formatted_receipt": send_formatted_receipt,
+            "send_formatted_split": send_formatted_split,
             "download_telegram_photo": download_telegram_photo,
             "get_latest_text_message": get_latest_text_message,
             "extract_file_id_from_message": extract_file_id_from_message,

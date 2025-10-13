@@ -75,6 +75,56 @@ class AnthropicService:
             raise ValueError("Anthropic API key is required")
         self.client = Anthropic(api_key=settings.anthropic_api_key)
 
+    def _log_api_error(self, operation: str, error: Exception, context_size_kb: float = 0) -> None:
+        """
+        Log API errors with diagnostic information for debugging.
+
+        Args:
+            operation: Name of the operation (e.g., "OCR", "split_bill")
+            error: The exception that occurred
+            context_size_kb: Size of request context in KB
+        """
+        error_type = type(error).__name__
+        error_msg = str(error)
+
+        # Try to extract status code from Anthropic errors
+        status_code = None
+        try:
+            from anthropic import APIError
+            if isinstance(error, APIError) and hasattr(error, 'status_code'):
+                status_code = error.status_code
+        except ImportError:
+            pass
+
+        # Classify error type
+        if status_code:
+            if status_code == 400:
+                error_class = "BAD_REQUEST"
+                hint = "Check image format/size or request structure"
+            elif status_code == 429:
+                error_class = "RATE_LIMIT"
+                hint = "Too many requests - will retry with backoff"
+            elif status_code in [500, 502, 503, 504]:
+                error_class = "SERVER_ERROR"
+                hint = "Anthropic API issue - will retry"
+            else:
+                error_class = "API_ERROR"
+                hint = "Unknown API error"
+        elif "timeout" in error_msg.lower():
+            error_class = "TIMEOUT"
+            hint = "Request took too long - will retry"
+        elif "connection" in error_msg.lower():
+            error_class = "CONNECTION"
+            hint = "Network issue - will retry"
+        else:
+            error_class = "UNKNOWN"
+            hint = "Unexpected error"
+
+        logger.error(
+            f"{operation} API call failed: {error_class} ({error_type}) - {hint}. "
+            f"Context size: {context_size_kb:.1f}KB. Error: {error_msg[:200]}"
+        )
+
     async def extract_receipt_items(self, image_bytes: bytes) -> ReceiptData:
         """
         Extract items, prices, totals, and currency from a receipt image using Claude Vision.
@@ -90,6 +140,14 @@ class AnthropicService:
         # Detect image media type and encode to base64
         media_type = detect_image_media_type(image_bytes)
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        # Diagnostic logging
+        image_size_kb = len(image_bytes) / 1024
+        estimated_request_kb = len(image_base64) / 1024 + 1  # base64 + prompt
+        logger.info(
+            f"OCR request: image_size={image_size_kb:.1f}KB, "
+            f"media_type={media_type}, estimated_request_size={estimated_request_kb:.1f}KB"
+        )
 
         # Create structured prompt for receipt extraction with currency detection
         prompt = """Analyze this receipt image and extract all items with their prices and currency.
@@ -133,30 +191,41 @@ For currency, use ISO 4217 codes:
 If unclear, use USD as default."""
 
         # Call Claude API with vision and response prefilling
-        message = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2048,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": image_base64,
+        try:
+            import time
+            start_time = time.time()
+
+            message = self.client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2048,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": image_base64,
+                                },
                             },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "{"}],
-                },
-            ],
-        )
+                            {"type": "text", "text": prompt},
+                        ],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "{"}],
+                    },
+                ],
+            )
+
+            api_duration = time.time() - start_time
+            logger.info(f"OCR API call completed in {api_duration:.2f}s")
+
+        except Exception as e:
+            self._log_api_error("OCR", e, image_size_kb)
+            raise
 
         # Extract text response
         response_text = message.content[0].text if message.content else ""
@@ -202,24 +271,21 @@ If unclear, use USD as default."""
         self,
         participant_description: str,
         receipt_data: ReceiptData,
-        image_bytes: bytes,
     ) -> BillSplit:
         """
         Split the bill among participants based on description and receipt data.
 
+        This is a TEXT-ONLY operation - no image processing. The receipt_data already
+        contains all necessary information extracted from OCR.
+
         Args:
             participant_description: User's description of who ate what
             receipt_data: Complete receipt data including items, currency, and totals
-            image_bytes: Raw bytes of the receipt image (for reference)
 
         Returns:
             BillSplit object with complete split information
         """
-        logger.info("Starting bill split with Claude")
-
-        # Detect image media type and encode to base64
-        media_type = detect_image_media_type(image_bytes)
-        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+        logger.info("Starting bill split with Claude (text-only mode)")
 
         # Format receipt items for prompt
         items_text = "\n".join(
@@ -227,6 +293,14 @@ If unclear, use USD as default."""
                 f"- {item.name}: {item.price} (x{item.quantity})"
                 for item in receipt_data.items
             ]
+        )
+
+        # Diagnostic logging
+        desc_length = len(participant_description)
+        items_count = len(receipt_data.items)
+        logger.info(
+            f"Split request: description_length={desc_length} chars, "
+            f"items_count={items_count}, currency={receipt_data.currency}"
         )
 
         # Create structured prompt for bill splitting
@@ -278,31 +352,34 @@ Important:
 - For shared items, ensure denominators add up correctly (e.g., if 2 people share, both get 1/2)
 - Use only the item names, numerators, and denominators - no totals"""
 
-        # Call Claude API with response prefilling
-        message = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=3072,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": image_base64,
-                            },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "{"}],
-                },
-            ],
-        )
+        # Call Claude API with response prefilling (text-only, no image)
+        try:
+            import time
+            start_time = time.time()
+
+            message = self.client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=3072,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,  # Text-only content
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "{"}],
+                    },
+                ],
+            )
+
+            api_duration = time.time() - start_time
+            logger.info(f"Split API call completed in {api_duration:.2f}s")
+
+        except Exception as e:
+            # Calculate approximate request size for diagnostics
+            prompt_size_kb = len(prompt) / 1024
+            self._log_api_error("split_bill", e, prompt_size_kb)
+            raise
 
         # Extract text response
         response_text = message.content[0].text if message.content else ""

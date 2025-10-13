@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Currency symbol mapping for common currencies
 CURRENCY_SYMBOLS = {
@@ -54,8 +54,20 @@ class ReceiptData(BaseModel):
 
     items: list[ReceiptItem] = Field(description="All items from the receipt")
     currency: str = Field(description="ISO 4217 currency code (e.g., USD, KZT, EUR)")
-    subtotal: Decimal = Field(description="Sum of all item prices")
+    subtotal: Decimal | None = Field(
+        default=None,
+        description="Sum of all item prices (auto-computed if not provided)",
+    )
     total: Decimal = Field(description="Total amount from receipt")
+
+    @model_validator(mode="after")
+    def compute_subtotal_if_missing(self) -> "ReceiptData":
+        """Auto-compute subtotal from items if not provided."""
+        if self.subtotal is None:
+            # Compute from items
+            computed = sum((item.total_price for item in self.items), Decimal("0"))
+            self.subtotal = computed
+        return self
 
     def format_summary(self) -> str:
         """Format receipt data as human-readable summary."""

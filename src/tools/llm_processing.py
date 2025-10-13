@@ -60,17 +60,19 @@ async def extract_receipt_ocr(
 
 
 async def create_initial_bill_split(
-    description: str, receipt_data: ReceiptData, image_bytes: bytes
+    description: str, receipt_data: ReceiptData
 ) -> BillSplit:
     """
     Create initial bill split by assigning items to participants.
+
+    This is a TEXT-ONLY operation. The receipt_data already contains all necessary
+    information extracted from OCR, so no image is needed.
 
     This is a wrapper around AnthropicService.split_bill.
 
     Args:
         description: User's description of who ate what
         receipt_data: Complete receipt data including items and totals
-        image_bytes: Raw bytes of the receipt image (for reference)
 
     Returns:
         BillSplit object with participant assignments
@@ -79,7 +81,7 @@ async def create_initial_bill_split(
         ValueError: If split creation fails
     """
     service = AnthropicService()
-    bill_split = await service.split_bill(description, receipt_data, image_bytes)
+    bill_split = await service.split_bill(description, receipt_data)
     logger.info(
         f"Created initial split with {len(bill_split.participants)} participants"
     )

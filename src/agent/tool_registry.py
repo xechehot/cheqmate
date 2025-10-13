@@ -147,7 +147,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "create_initial_bill_split",
-        "description": "Create initial bill split by assigning receipt items to participants based on the description. This uses LLM to match participants to items.",
+        "description": "Create initial bill split by assigning receipt items to participants based on the description. This is a TEXT-ONLY operation using structured receipt data from OCR - no image needed.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -157,14 +157,10 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "receipt_data_json": {
                     "type": "string",
-                    "description": "JSON string of ReceiptData object (from extract_receipt_ocr)",
-                },
-                "image_bytes_base64": {
-                    "type": "string",
-                    "description": "Base64-encoded image bytes of the receipt",
+                    "description": "JSON string of ReceiptData object (from extract_receipt_ocr). Contains all items, prices, totals, and currency.",
                 },
             },
-            "required": ["description", "receipt_data_json", "image_bytes_base64"],
+            "required": ["description", "receipt_data_json"],
         },
     },
     {

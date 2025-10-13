@@ -116,12 +116,11 @@ class TestCreateInitialBillSplit:
         )
         mock_service.split_bill = AsyncMock(return_value=expected_split)
 
-        # Execute
+        # Execute (TEXT-ONLY - no image needed)
         description = "Alice had burger and half the fries, Bob had salad and half the fries"
         result = await create_initial_bill_split(
             description=description,
             receipt_data=sample_receipt_data,
-            image_bytes=b"fake_image",
         )
 
         # Verify
@@ -147,7 +146,6 @@ class TestCreateInitialBillSplit:
             await create_initial_bill_split(
                 description="Alice had burger",
                 receipt_data=sample_receipt_data,
-                image_bytes=b"fake_image",
             )
 
 
@@ -287,12 +285,11 @@ class TestIntegration:
         # Verify OCR result
         assert receipt_data == sample_receipt_data
 
-        # Execute split
+        # Execute split (TEXT-ONLY - no image needed)
         description = "Alice and Bob split the bill"
         bill_split = await create_initial_bill_split(
             description=description,
             receipt_data=receipt_data,
-            image_bytes=image_bytes,
         )
 
         # Verify split result

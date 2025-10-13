@@ -44,6 +44,15 @@ class AgentOrchestrator:
             api_key=settings.anthropic_api_key,
             timeout=60.0,  # 60 second timeout for API calls
         )
+
+        # Performance monitoring metrics
+        self.metrics = {
+            "total_runs": 0,
+            "successful_runs": 0,
+            "failed_runs": 0,
+            "total_iterations": 0,
+            "total_duration_s": 0.0,
+        }
         logger.info("Agent orchestrator initialized with 60s timeout")
 
     async def run(
@@ -156,6 +165,33 @@ class AgentOrchestrator:
 
                 messages.append({"role": "user", "content": tool_results})
 
+                # CONVERSATION TRUNCATION: Prevent bloat by keeping only recent context
+                # After iteration 3, truncate to last 4 messages (2 iterations) + fresh state
+                if iteration >= 3 and len(messages) > 5:
+                    old_message_count = len(messages)
+                    old_size = sum(len(str(msg)) for msg in messages)
+
+                    # Keep last 4 messages (2 assistant+user pairs)
+                    recent_messages = messages[-4:]
+
+                    # Prepend fresh state summary as first user message
+                    fresh_summary = build_user_prompt(
+                        agent_context,
+                        new_message="[State refreshed to prevent conversation bloat]",
+                    )
+
+                    messages = [
+                        {"role": "user", "content": fresh_summary}
+                    ] + recent_messages
+
+                    new_message_count = len(messages)
+                    new_size = sum(len(str(msg)) for msg in messages)
+
+                    logger.info(
+                        f"Truncated conversation: {old_message_count} → {new_message_count} messages, "
+                        f"{old_size} → {new_size} chars (saved {old_size - new_size} chars)"
+                    )
+
                 # Log iteration duration
                 iteration_duration = time.time() - iteration_start_time
                 logger.info(
@@ -202,10 +238,46 @@ class AgentOrchestrator:
 
         # Log total agent run duration
         total_duration = time.time() - agent_start_time
+
+        # Update performance metrics
+        self.metrics["total_runs"] += 1
+        self.metrics["total_iterations"] += iteration
+        self.metrics["total_duration_s"] += total_duration
+
+        # Determine if run was successful (completed normally, not hit max iterations or error)
+        if iteration < MAX_ITERATIONS:
+            self.metrics["successful_runs"] += 1
+            success_status = "SUCCESS"
+        else:
+            self.metrics["failed_runs"] += 1
+            success_status = "FAILED"
+
+        # Calculate running averages
+        avg_iterations = self.metrics["total_iterations"] / self.metrics["total_runs"]
+        avg_duration = self.metrics["total_duration_s"] / self.metrics["total_runs"]
+        success_rate = (
+            self.metrics["successful_runs"] / self.metrics["total_runs"]
+        ) * 100
+
         logger.info(
-            f"Agent orchestration completed for chat {chat_id} in {total_duration:.2f}s "
-            f"({iteration} iterations)"
+            f"Agent orchestration completed for chat {chat_id}: {success_status} "
+            f"in {total_duration:.2f}s ({iteration} iterations)"
         )
+        logger.info(
+            f"Performance metrics: success_rate={success_rate:.1f}%, "
+            f"avg_iterations={avg_iterations:.1f}, avg_duration={avg_duration:.1f}s "
+            f"(total_runs={self.metrics['total_runs']})"
+        )
+
+        # Alert on performance degradation
+        if success_rate < 50 and self.metrics["total_runs"] >= 5:
+            logger.warning(
+                f"⚠️  Low success rate detected: {success_rate:.1f}% over {self.metrics['total_runs']} runs"
+            )
+        if avg_duration > 30 and self.metrics["total_runs"] >= 5:
+            logger.warning(
+                f"⚠️  Slow execution detected: avg {avg_duration:.1f}s over {self.metrics['total_runs']} runs"
+            )
 
     async def _execute_tools(
         self,
@@ -290,7 +362,11 @@ class AgentOrchestrator:
         tool_context: dict[str, Any],
     ) -> str:
         """
-        Execute a single tool call.
+        Execute a single tool call with retry logic for transient errors.
+
+        Retries up to 3 times with exponential backoff (1s, 2s, 4s) for:
+        - API errors (rate limits, timeouts, 500s)
+        - Connection errors
 
         Args:
             tool_block: Tool use block from Claude containing name and input
@@ -300,7 +376,7 @@ class AgentOrchestrator:
             Tool result as string
 
         Raises:
-            ValueError: If tool is unknown or execution fails
+            ValueError: If tool is unknown or execution fails after all retries
         """
         tool_name = tool_block.name
         tool_input = tool_block.input
@@ -308,6 +384,156 @@ class AgentOrchestrator:
         tool_start_time = time.time()
         logger.info(f"Executing tool: {tool_name}")
         logger.debug(f"Tool input: {tool_input}")
+
+        # Retry logic for transient errors
+        max_retries = 3
+        backoff = 1.0
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                return await self._execute_tool_once(
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    tool_context=tool_context,
+                    tool_start_time=tool_start_time,
+                )
+            except Exception as e:
+                last_error = e
+                error_type = type(e).__name__
+
+                # Check if error is retryable
+                is_retryable = self._is_retryable_error(e)
+
+                if is_retryable and attempt < max_retries - 1:
+                    logger.warning(
+                        f"Tool {tool_name} failed with {error_type} (attempt {attempt + 1}/{max_retries}). "
+                        f"Retrying in {backoff}s... Error: {str(e)[:100]}"
+                    )
+                    await asyncio.sleep(backoff)
+                    backoff *= 2  # Exponential backoff
+                else:
+                    # Not retryable or final attempt - raise error
+                    if is_retryable:
+                        logger.error(
+                            f"Tool {tool_name} failed after {max_retries} attempts: {e}\n"
+                            f"Tool input: {tool_input}\n"
+                            f"Error type: {error_type}"
+                        )
+                    else:
+                        logger.error(
+                            f"Tool {tool_name} failed with non-retryable error: {e}\n"
+                            f"Tool input: {tool_input}\n"
+                            f"Error type: {error_type}"
+                        )
+                    raise
+
+        # Should never reach here, but just in case
+        raise last_error if last_error else RuntimeError("Tool execution failed")
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        """
+        Determine if an error is retryable (transient).
+
+        Retryable errors:
+        - API rate limits (429)
+        - Server errors (500, 503)
+        - Connection/timeout errors
+        - Overloaded errors
+
+        Non-retryable errors:
+        - Bad requests (400)
+        - Authentication errors
+        - ValueError from business logic
+
+        Args:
+            error: The exception to check
+
+        Returns:
+            True if error is retryable, False otherwise
+        """
+        error_str = str(error).lower()
+        error_type = type(error).__name__
+
+        # Import anthropic exceptions
+        try:
+            from anthropic import (
+                APIError,
+                APIConnectionError,
+                APITimeoutError,
+                RateLimitError,
+            )
+
+            # Anthropic-specific retryable errors
+            if isinstance(error, (RateLimitError, APITimeoutError, APIConnectionError)):
+                return True
+
+            if isinstance(error, APIError):
+                # Check status code if available
+                if hasattr(error, "status_code"):
+                    # Retry on 429, 500, 502, 503, 504
+                    if error.status_code in [429, 500, 502, 503, 504]:
+                        return True
+                    # Don't retry on 400-level errors (except 429)
+                    if 400 <= error.status_code < 500:
+                        return False
+        except ImportError:
+            pass
+
+        # Generic retryable error patterns
+        retryable_patterns = [
+            "timeout",
+            "connection",
+            "rate limit",
+            "overloaded",
+            "service unavailable",
+            "internal server error",
+            "502",
+            "503",
+            "504",
+        ]
+
+        for pattern in retryable_patterns:
+            if pattern in error_str:
+                return True
+
+        # Specific non-retryable errors
+        non_retryable_types = [
+            "ValueError",
+            "KeyError",
+            "AttributeError",
+            "TypeError",
+        ]
+
+        if error_type in non_retryable_types:
+            return False
+
+        # Default to not retrying if unsure
+        return False
+
+    async def _execute_tool_once(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tool_context: dict[str, Any],
+        tool_start_time: float,
+    ) -> str:
+        """
+        Execute a single tool call once (called by _execute_single_tool with retry logic).
+
+        Args:
+            tool_name: Name of the tool to execute
+            tool_input: Input parameters from Claude
+            tool_context: Context data for tool execution
+            tool_start_time: Start time for logging
+
+        Returns:
+            Tool result as string
+
+        Raises:
+            ValueError: If tool is unknown
+            Exception: Any error from tool execution
+        """
 
         # Import tools dynamically
         from src.tools import (
@@ -448,7 +674,20 @@ class AgentOrchestrator:
                     # Generic JSON parsing
                     kwargs[actual_param] = json.loads(param_value)
             else:
-                kwargs[param_name] = param_value
+                # Check if function parameter expects Decimal and value is numeric
+                if param_name in sig.parameters:
+                    param_type = sig.parameters[param_name].annotation
+                    # Convert numeric types to Decimal if function expects it
+                    if param_type == Decimal and isinstance(param_value, (int, float)):
+                        kwargs[param_name] = Decimal(str(param_value))
+                        logger.debug(
+                            f"Converted {param_name} from {type(param_value).__name__} "
+                            f"to Decimal: {param_value} -> {kwargs[param_name]}"
+                        )
+                    else:
+                        kwargs[param_name] = param_value
+                else:
+                    kwargs[param_name] = param_value
 
         # Call tool (handle both sync and async)
         if inspect.iscoroutinefunction(tool_func):

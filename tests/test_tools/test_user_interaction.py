@@ -343,7 +343,7 @@ class TestDownloadTelegramPhoto:
     async def test_download_photo_success(
         self, mock_telegram_context, mock_telegram_file, mock_conversation_manager
     ):
-        """Test successful photo download."""
+        """Test successful photo download and session caching."""
         from unittest.mock import patch
 
         mock_telegram_context.bot.get_file.return_value = mock_telegram_file
@@ -358,9 +358,17 @@ class TestDownloadTelegramPhoto:
                 context=mock_telegram_context,
             )
 
-        assert result == b"fake_image_data"
+        # Function should return None (image is cached in session)
+        assert result is None
+        # Verify Telegram API calls
         mock_telegram_context.bot.get_file.assert_called_once_with("file_abc123")
         mock_telegram_file.download_as_bytearray.assert_called_once()
+        # Verify session was accessed for caching
+        mock_conversation_manager.get_session.assert_called_once_with(12345)
+        # Verify image was stored in session (check the session object directly)
+        session = mock_conversation_manager.get_session.return_value
+        assert session.has_image_bytes()
+        assert session.image_bytes == b"fake_image_data"
 
     @pytest.mark.asyncio
     async def test_download_photo_failure(

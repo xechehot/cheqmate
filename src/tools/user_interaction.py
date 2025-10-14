@@ -234,9 +234,12 @@ async def send_formatted_split(
 
 async def download_telegram_photo(
     chat_id: int, file_id: str, context: ContextTypes.DEFAULT_TYPE
-) -> bytes:
+) -> None:
     """
     Download a photo from Telegram by file ID and cache in session.
+
+    The image is cached in the session and can be retrieved by extract_receipt_ocr.
+    This prevents large binary data from being added to the conversation history.
 
     Args:
         chat_id: Telegram chat ID (for session caching)
@@ -244,7 +247,7 @@ async def download_telegram_photo(
         context: Telegram context
 
     Returns:
-        Raw image bytes
+        None (image is cached in session)
 
     Raises:
         Exception: If download fails
@@ -265,7 +268,7 @@ async def download_telegram_photo(
         session = conversation_manager.get_session(chat_id)
         session.store_image_bytes(image_bytes)
 
-        return image_bytes
+        logger.info(f"Image cached in session for chat {chat_id}")
     except Exception as e:
         logger.error(f"Failed to download photo {file_id}: {e}", exc_info=True)
         raise

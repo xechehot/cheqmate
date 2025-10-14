@@ -301,7 +301,7 @@ class AgentOrchestrator:
                 if result_size > 10000:
                     logger.debug(
                         f"Tool {tool_block.name} returned large result: {result_size} bytes "
-                        f"({result_size/1024:.1f} KB)"
+                        f"({result_size / 1024:.1f} KB)"
                     )
 
                 tool_results.append(
@@ -666,8 +666,10 @@ class AgentOrchestrator:
             # Return JSON for complex objects
             return result.model_dump_json()
         elif isinstance(result, bytes):
-            # Return base64 for binary data
-            return base64.b64encode(result).decode("utf-8")
+            # Don't return base64 to avoid bloating conversation history
+            # Binary data should be cached in session instead
+            size_kb = len(result) / 1024
+            return f"Binary data received and cached ({size_kb:.1f} KB)"
         elif isinstance(result, dict):
             # Handle dict with Decimal values
             def decimal_default(obj):

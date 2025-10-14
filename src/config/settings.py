@@ -68,6 +68,16 @@ class Settings(BaseSettings):
         description="Logging level",
     )
 
+    # Phoenix Tracing (Observability)
+    phoenix_enabled: bool = Field(
+        default=True,
+        description="Enable Phoenix tracing for LLM observability",
+    )
+    phoenix_collector_endpoint: str = Field(
+        default="http://localhost:4317",
+        description="Phoenix OTLP gRPC collector endpoint",
+    )
+
 
 # Global settings instance
 settings = Settings()

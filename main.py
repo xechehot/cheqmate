@@ -1,10 +1,12 @@
 """CheqMate - Telegram bot for smart restaurant bill splitting."""
 
+import atexit
 import logging
 import sys
 
 from src.bot import run_bot
 from src.config import settings
+from src.observability import initialize_phoenix, shutdown_phoenix
 
 
 def setup_logging() -> None:
@@ -29,13 +31,28 @@ def main() -> None:
     setup_logging()
     logger = logging.getLogger(__name__)
 
+    # Initialize Phoenix tracing for LLM observability
+    try:
+        initialize_phoenix(
+            endpoint=settings.phoenix_collector_endpoint,
+            enabled=settings.phoenix_enabled,
+            auto_instrument=True,
+        )
+        # Register shutdown handler to flush traces on exit
+        atexit.register(shutdown_phoenix)
+    except Exception as e:
+        logger.warning(f"Failed to initialize Phoenix tracing: {e}")
+        logger.info("Continuing without tracing...")
+
     try:
         logger.info("Starting CheqMate bot application")
         run_bot()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
+        shutdown_phoenix()  # Flush traces on graceful shutdown
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
+        shutdown_phoenix()  # Flush traces on error
         sys.exit(1)
 
 

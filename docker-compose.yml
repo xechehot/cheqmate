@@ -1,0 +1,29 @@
+# Docker Compose configuration for CheqMate development environment
+services:
+  # Arize Phoenix - AI Observability Platform
+  # Access UI at http://localhost:6006
+  # Collects traces via OTLP at http://localhost:4317 (gRPC) and http://localhost:6006/v1/traces (HTTP)
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: cheqmate-phoenix
+    ports:
+      - "6006:6006"  # Phoenix UI and HTTP OTLP collector
+      - "4317:4317"  # gRPC OTLP collector (recommended for production)
+      - "9090:9090"  # Optional: Prometheus metrics endpoint
+    environment:
+      # Use mounted volume for persistent SQLite storage
+      - PHOENIX_WORKING_DIR=/mnt/data
+    volumes:
+      # Persistent volume for trace data (SQLite database)
+      - phoenix_data:/mnt/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:6006/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  phoenix_data:
+    driver: local

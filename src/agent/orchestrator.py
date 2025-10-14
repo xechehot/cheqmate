@@ -165,33 +165,6 @@ class AgentOrchestrator:
 
                 messages.append({"role": "user", "content": tool_results})
 
-                # CONVERSATION TRUNCATION: Prevent bloat by keeping only recent context
-                # After iteration 3, truncate to last 4 messages (2 iterations) + fresh state
-                if iteration >= 3 and len(messages) > 5:
-                    old_message_count = len(messages)
-                    old_size = sum(len(str(msg)) for msg in messages)
-
-                    # Keep last 4 messages (2 assistant+user pairs)
-                    recent_messages = messages[-4:]
-
-                    # Prepend fresh state summary as first user message
-                    fresh_summary = build_user_prompt(
-                        agent_context,
-                        new_message="[State refreshed to prevent conversation bloat]",
-                    )
-
-                    messages = [
-                        {"role": "user", "content": fresh_summary}
-                    ] + recent_messages
-
-                    new_message_count = len(messages)
-                    new_size = sum(len(str(msg)) for msg in messages)
-
-                    logger.info(
-                        f"Truncated conversation: {old_message_count} → {new_message_count} messages, "
-                        f"{old_size} → {new_size} chars (saved {old_size - new_size} chars)"
-                    )
-
                 # Log iteration duration
                 iteration_duration = time.time() - iteration_start_time
                 logger.info(
@@ -308,9 +281,7 @@ class AgentOrchestrator:
         # Wait for all tools to complete
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Format results for Claude with truncation for large content
-        MAX_TOOL_RESULT_SIZE = 10000  # 10KB limit per tool result
-
+        # Format results for Claude
         for tool_block, result in zip(tool_use_blocks, results):
             if isinstance(result, Exception):
                 logger.error(f"Tool {tool_block.name} failed: {result}")
@@ -326,33 +297,20 @@ class AgentOrchestrator:
                 result_str = str(result)
                 result_size = len(result_str)
 
-                # Truncate large results (e.g., base64 images) to prevent conversation bloat
-                if result_size > MAX_TOOL_RESULT_SIZE:
-                    truncated_content = (
-                        f"Success: {tool_block.name} completed. "
-                        f"Result size: {result_size} bytes "
-                        f"(truncated from conversation history to prevent bloat). "
-                        f"Data has been processed successfully."
+                # Log result size for monitoring
+                if result_size > 10000:
+                    logger.debug(
+                        f"Tool {tool_block.name} returned large result: {result_size} bytes "
+                        f"({result_size/1024:.1f} KB)"
                     )
-                    logger.info(
-                        f"Truncated {tool_block.name} result: {result_size} bytes -> "
-                        f"{len(truncated_content)} bytes"
-                    )
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_block.id,
-                            "content": truncated_content,
-                        }
-                    )
-                else:
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_block.id,
-                            "content": result_str,
-                        }
-                    )
+
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_block.id,
+                        "content": result_str,
+                    }
+                )
 
         return tool_results
 

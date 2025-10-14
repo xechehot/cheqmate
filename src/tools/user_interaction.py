@@ -6,9 +6,13 @@ These tools handle bidirectional communication with users:
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from telegram import Update
 from telegram.ext import ContextTypes
+
+if TYPE_CHECKING:
+    from src.models.bill import BillSplit, ReceiptData
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +164,7 @@ async def send_error_message(
 
 
 async def send_formatted_receipt(
-    chat_id: int, receipt_data_json: str, context: ContextTypes.DEFAULT_TYPE
+    chat_id: int, receipt_data: "ReceiptData", context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     """
     Send a formatted receipt summary to the user.
@@ -171,15 +175,10 @@ async def send_formatted_receipt(
 
     Args:
         chat_id: Telegram chat ID
-        receipt_data_json: JSON string of ReceiptData object
+        receipt_data: ReceiptData object (deserialized by orchestrator)
         context: Telegram context
     """
-    from src.models.bill import ReceiptData
-
     try:
-        # Parse JSON to ReceiptData object
-        receipt_data = ReceiptData.model_validate_json(receipt_data_json)
-
         # Format using the model's format_summary method
         formatted_text = receipt_data.format_summary()
 
@@ -197,7 +196,7 @@ async def send_formatted_receipt(
 
 async def send_formatted_split(
     chat_id: int,
-    bill_split_json: str,
+    bill_split: "BillSplit",
     context: ContextTypes.DEFAULT_TYPE,
     title: str = "Bill Split - Draft",
 ) -> None:
@@ -210,16 +209,11 @@ async def send_formatted_split(
 
     Args:
         chat_id: Telegram chat ID
-        bill_split_json: JSON string of BillSplit object
+        bill_split: BillSplit object (deserialized by orchestrator)
         context: Telegram context
         title: Optional title for the split summary (default: "Bill Split - Draft")
     """
-    from src.models.bill import BillSplit
-
     try:
-        # Parse JSON to BillSplit object
-        bill_split = BillSplit.model_validate_json(bill_split_json)
-
         # Format using the model's format_summary method
         formatted_text = bill_split.format_summary(title=title)
 

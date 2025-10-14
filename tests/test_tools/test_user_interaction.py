@@ -229,21 +229,25 @@ class TestSendFormattedReceipt:
     @pytest.mark.asyncio
     async def test_send_receipt_success(self, mock_telegram_context):
         """Test sending formatted receipt."""
-        receipt_json = """
-        {
-            "items": [
-                {"name": "Burger", "price": "12.50", "quantity": 1},
-                {"name": "Fries", "price": "4.00", "quantity": 2}
-            ],
-            "currency": "USD",
-            "subtotal": "20.50",
-            "total": "23.50"
-        }
-        """
+        from src.models.bill import ReceiptData
+
+        receipt_data = ReceiptData.model_validate_json(
+            """
+            {
+                "items": [
+                    {"name": "Burger", "price": "12.50", "quantity": 1},
+                    {"name": "Fries", "price": "4.00", "quantity": 2}
+                ],
+                "currency": "USD",
+                "subtotal": "20.50",
+                "total": "23.50"
+            }
+            """
+        )
 
         await send_formatted_receipt(
             chat_id=12345,
-            receipt_data_json=receipt_json,
+            receipt_data=receipt_data,
             context=mock_telegram_context,
         )
 
@@ -253,16 +257,6 @@ class TestSendFormattedReceipt:
         assert "Receipt Extracted" in text or "Burger" in text
         assert call_args.kwargs["parse_mode"] == "Markdown"
 
-    @pytest.mark.asyncio
-    async def test_send_receipt_invalid_json(self, mock_telegram_context):
-        """Test sending formatted receipt with invalid JSON."""
-        with pytest.raises(ValueError, match="Failed to format and send receipt"):
-            await send_formatted_receipt(
-                chat_id=12345,
-                receipt_data_json="invalid json",
-                context=mock_telegram_context,
-            )
-
 
 class TestSendFormattedSplit:
     """Tests for send_formatted_split function."""
@@ -270,34 +264,38 @@ class TestSendFormattedSplit:
     @pytest.mark.asyncio
     async def test_send_split_success(self, mock_telegram_context):
         """Test sending formatted bill split."""
-        split_json = """
-        {
-            "participants": [
-                {
-                    "name": "Alice",
-                    "items": [
-                        {"item_name": "Burger", "item_numerator": 1, "item_denominator": 1}
-                    ]
-                },
-                {
-                    "name": "Bob",
-                    "items": [
-                        {"item_name": "Fries", "item_numerator": 1, "item_denominator": 2}
-                    ]
-                }
-            ],
-            "receipt_items": [
-                {"name": "Burger", "price": "12.50", "quantity": 1},
-                {"name": "Fries", "price": "4.00", "quantity": 1}
-            ],
-            "currency": "USD",
-            "total": "16.50"
-        }
-        """
+        from src.models.bill import BillSplit
+
+        bill_split = BillSplit.model_validate_json(
+            """
+            {
+                "participants": [
+                    {
+                        "name": "Alice",
+                        "items": [
+                            {"item_name": "Burger", "item_numerator": 1, "item_denominator": 1}
+                        ]
+                    },
+                    {
+                        "name": "Bob",
+                        "items": [
+                            {"item_name": "Fries", "item_numerator": 1, "item_denominator": 2}
+                        ]
+                    }
+                ],
+                "receipt_items": [
+                    {"name": "Burger", "price": "12.50", "quantity": 1},
+                    {"name": "Fries", "price": "4.00", "quantity": 1}
+                ],
+                "currency": "USD",
+                "total": "16.50"
+            }
+            """
+        )
 
         await send_formatted_split(
             chat_id=12345,
-            bill_split_json=split_json,
+            bill_split=bill_split,
             context=mock_telegram_context,
             title="Bill Split - Draft",
         )
@@ -311,20 +309,24 @@ class TestSendFormattedSplit:
     @pytest.mark.asyncio
     async def test_send_split_with_default_title(self, mock_telegram_context):
         """Test sending formatted split with default title."""
-        split_json = """
-        {
-            "participants": [
-                {"name": "Alice", "items": []}
-            ],
-            "receipt_items": [],
-            "currency": "USD",
-            "total": "0.00"
-        }
-        """
+        from src.models.bill import BillSplit
+
+        bill_split = BillSplit.model_validate_json(
+            """
+            {
+                "participants": [
+                    {"name": "Alice", "items": []}
+                ],
+                "receipt_items": [],
+                "currency": "USD",
+                "total": "0.00"
+            }
+            """
+        )
 
         await send_formatted_split(
             chat_id=12345,
-            bill_split_json=split_json,
+            bill_split=bill_split,
             context=mock_telegram_context,
         )
 
@@ -332,16 +334,6 @@ class TestSendFormattedSplit:
         call_args = mock_telegram_context.bot.send_message.call_args
         text = call_args.kwargs["text"]
         assert "Draft" in text or "Bill Split" in text
-
-    @pytest.mark.asyncio
-    async def test_send_split_invalid_json(self, mock_telegram_context):
-        """Test sending formatted split with invalid JSON."""
-        with pytest.raises(ValueError, match="Failed to format and send bill split"):
-            await send_formatted_split(
-                chat_id=12345,
-                bill_split_json="invalid json",
-                context=mock_telegram_context,
-            )
 
 
 class TestDownloadTelegramPhoto:

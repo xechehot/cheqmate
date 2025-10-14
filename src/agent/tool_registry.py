@@ -1,104 +1,75 @@
-"""Tool registry for Claude agent - defines all 20 available tools in Anthropic format."""
+"""Tool registry for Claude agent - defines all 22 tools in Anthropic format."""
 
 from typing import Any
 
 # Tool definitions for Anthropic Claude function calling API
 TOOLS: list[dict[str, Any]] = [
-    # ===== USER INTERACTION TOOLS (6) =====
+    # ===== USER INTERACTION TOOLS (8) =====
     {
         "name": "send_message",
-        "description": "Send a generic message to the user in Telegram. Use this to communicate results, status updates, or information.",
+        "description": "Send message to user (Markdown supported)",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "Message text to send (supports Markdown formatting)",
-                }
-            },
+            "properties": {"text": {"type": "string", "description": "Message text"}},
             "required": ["text"],
         },
     },
     {
         "name": "request_participant_description",
-        "description": "Ask the user to describe what each participant ate. Use this when you need the participant information and it's not yet provided.",
+        "description": "Ask user to describe who ate what",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "request_receipt_photo",
-        "description": "Ask the user to send a photo of the receipt. Use this after you have the participant description but before you can process the bill.",
+        "description": "Ask user to send receipt photo",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "ask_clarification_question",
-        "description": "Ask the user a specific clarification question when information is ambiguous, unclear, or missing.",
+        "description": "Ask clarification question",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "question": {
-                    "type": "string",
-                    "description": "The clarification question to ask the user",
-                }
-            },
+            "properties": {"question": {"type": "string", "description": "Question"}},
             "required": ["question"],
         },
     },
     {
         "name": "send_processing_status",
-        "description": "Send a status update to show processing progress (e.g., 'Processing receipt...', 'Analyzing items...', 'Verifying totals...').",
+        "description": "Send status update",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "status": {
-                    "type": "string",
-                    "description": "Status message to display to the user",
-                }
-            },
+            "properties": {"status": {"type": "string", "description": "Status message"}},
             "required": ["status"],
         },
     },
     {
         "name": "send_error_message",
-        "description": "Send an error message to the user when something goes wrong that prevents completing the task.",
+        "description": "Send error message",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "error": {
-                    "type": "string",
-                    "description": "Error description to show to the user",
-                }
-            },
+            "properties": {"error": {"type": "string", "description": "Error text"}},
             "required": ["error"],
         },
     },
     {
         "name": "send_formatted_receipt",
-        "description": "Send a formatted receipt summary to the user showing OCR-extracted items, prices, and totals. Use this IMMEDIATELY after extract_receipt_ocr to let the user verify the recognized receipt before proceeding with bill splitting.",
+        "description": "Send formatted receipt summary. Use IMMEDIATELY after extract_receipt_ocr",
         "input_schema": {
             "type": "object",
             "properties": {
-                "receipt_data_json": {
-                    "type": "string",
-                    "description": "JSON string of ReceiptData object (from extract_receipt_ocr)",
-                }
+                "receipt_data_json": {"type": "string", "description": "ReceiptData JSON"}
             },
             "required": ["receipt_data_json"],
         },
     },
     {
         "name": "send_formatted_split",
-        "description": "Send a formatted bill split summary to the user showing participant assignments and calculated totals. Use this to show intermediate results (draft splits, refined splits) to provide transparency and progress feedback. Call IMMEDIATELY after create_initial_bill_split and after refine_split_with_llm.",
+        "description": "Send formatted split summary. Use after create_initial_bill_split and refine_split_with_llm",
         "input_schema": {
             "type": "object",
             "properties": {
-                "bill_split_json": {
-                    "type": "string",
-                    "description": "JSON string of BillSplit object",
-                },
-                "title": {
-                    "type": "string",
-                    "description": "Title for the split summary (e.g., 'Bill Split - Draft', 'Bill Split - Refined'). Default: 'Bill Split - Draft'",
-                },
+                "bill_split_json": {"type": "string", "description": "BillSplit JSON"},
+                "title": {"type": "string", "description": "Title (default: 'Bill Split - Draft')"},
             },
             "required": ["bill_split_json"],
         },
@@ -106,113 +77,79 @@ TOOLS: list[dict[str, Any]] = [
     # ===== STATE MANAGEMENT TOOLS (4) =====
     {
         "name": "get_participant_description",
-        "description": "Retrieve the stored participant description from session state. Returns the description text if set, or None if not yet provided.",
+        "description": "Get stored participant description",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "get_receipt_file_id",
-        "description": "Retrieve the stored receipt file ID from session state. Returns the Telegram file_id if a receipt photo was uploaded, or None if not yet provided.",
+        "description": "Get stored receipt file ID",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "save_participant_description",
-        "description": "Store the participant description in session state for later use.",
+        "description": "Save participant description",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string",
-                    "description": "User's description of who ate what",
-                }
-            },
+            "properties": {"description": {"type": "string", "description": "Who ate what"}},
             "required": ["description"],
         },
     },
     {
         "name": "save_receipt_file_id",
-        "description": "Store the receipt file ID in session state for later use.",
+        "description": "Save receipt file ID",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "file_id": {
-                    "type": "string",
-                    "description": "Telegram file ID of the receipt photo",
-                }
-            },
+            "properties": {"file_id": {"type": "string", "description": "File ID"}},
             "required": ["file_id"],
         },
     },
     # ===== TELEGRAM UTILITY TOOLS (3) =====
     {
         "name": "download_telegram_photo",
-        "description": "Download a photo from Telegram by file ID. Image bytes are automatically cached in session for use by extract_receipt_ocr. Returns success confirmation.",
+        "description": "Download photo by file ID (auto-cached for OCR)",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "file_id": {
-                    "type": "string",
-                    "description": "Telegram file ID of the photo to download",
-                }
-            },
+            "properties": {"file_id": {"type": "string", "description": "Photo file ID"}},
             "required": ["file_id"],
         },
     },
     {
         "name": "get_latest_text_message",
-        "description": "Extract text message content from the current Telegram update. Returns the text if available, or None if the user didn't send text.",
+        "description": "Extract text from current update",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "extract_file_id_from_message",
-        "description": "Extract photo file ID from the current Telegram update. Returns the file_id if user sent a photo, or None otherwise.",
+        "description": "Extract photo file ID from current update",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     # ===== LLM PROCESSING TOOLS (3) =====
     {
         "name": "extract_receipt_ocr",
-        "description": "Extract items, prices, currency, and totals from a receipt image using Claude Vision OCR. Automatically uses cached image if download_telegram_photo was called previously. No parameters needed - just call it after downloading the photo.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
+        "description": "OCR receipt image (uses cached image). No parameters needed",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "create_initial_bill_split",
-        "description": "Create initial bill split by assigning receipt items to participants based on the description. This is a TEXT-ONLY operation using structured receipt data from OCR - no image needed.",
+        "description": "Create bill split from description and receipt data",
         "input_schema": {
             "type": "object",
             "properties": {
-                "description": {
-                    "type": "string",
-                    "description": "User's description of who ate what",
-                },
-                "receipt_data_json": {
-                    "type": "string",
-                    "description": "JSON string of ReceiptData object (from extract_receipt_ocr). Contains all items, prices, totals, and currency.",
-                },
+                "description": {"type": "string", "description": "Who ate what"},
+                "receipt_data_json": {"type": "string", "description": "ReceiptData JSON from OCR"},
             },
             "required": ["description", "receipt_data_json"],
         },
     },
     {
         "name": "refine_split_with_llm",
-        "description": "Use LLM to refine bill split when issues are detected (e.g., discrepancies, missing items). Provides corrected assignments.",
+        "description": "Refine bill split when issues detected",
         "input_schema": {
             "type": "object",
             "properties": {
-                "bill_split_json": {
-                    "type": "string",
-                    "description": "JSON string of current BillSplit object",
-                },
-                "receipt_data_json": {
-                    "type": "string",
-                    "description": "JSON string of ReceiptData object",
-                },
-                "issue_explanation": {
-                    "type": "string",
-                    "description": "Clear description of the issue to fix (e.g., 'Discrepancy of 5.00 detected', 'Missing items: Pizza, Salad')",
-                },
+                "bill_split_json": {"type": "string", "description": "Current BillSplit JSON"},
+                "receipt_data_json": {"type": "string", "description": "ReceiptData JSON"},
+                "issue_explanation": {"type": "string", "description": "Issue details"},
             },
             "required": ["bill_split_json", "receipt_data_json", "issue_explanation"],
         },
@@ -220,68 +157,45 @@ TOOLS: list[dict[str, Any]] = [
     # ===== CALCULATION TOOLS (4) =====
     {
         "name": "calculate_all_participant_totals",
-        "description": "Calculate the total amount each participant owes based on their assigned items and fractional ownership. Returns a dictionary of {name: total}.",
+        "description": "Calculate total owed by each participant",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "bill_split_json": {
-                    "type": "string",
-                    "description": "JSON string of BillSplit object",
-                }
-            },
+            "properties": {"bill_split_json": {"type": "string", "description": "BillSplit JSON"}},
             "required": ["bill_split_json"],
         },
     },
     {
         "name": "calculate_total_discrepancy",
-        "description": "Calculate the absolute difference between sum of participant totals and the receipt total. Used to verify accuracy.",
+        "description": "Calculate difference between participant sum and receipt total",
         "input_schema": {
             "type": "object",
             "properties": {
-                "bill_split_json": {
-                    "type": "string",
-                    "description": "JSON string of BillSplit object",
-                },
-                "receipt_total": {
-                    "type": "number",
-                    "description": "Target total from receipt",
-                },
+                "bill_split_json": {"type": "string", "description": "BillSplit JSON"},
+                "receipt_total": {"type": "number", "description": "Receipt total"},
             },
             "required": ["bill_split_json", "receipt_total"],
         },
     },
     {
         "name": "check_accuracy_threshold",
-        "description": "Check if the split is mathematically accurate within an acceptable tolerance (default 0.02). Returns true if accurate, false otherwise.",
+        "description": "Check if split is accurate within tolerance (default 0.02)",
         "input_schema": {
             "type": "object",
             "properties": {
-                "discrepancy": {
-                    "type": "number",
-                    "description": "Absolute difference between calculated sum and target",
-                },
-                "tolerance": {
-                    "type": "number",
-                    "description": "Maximum acceptable difference (default 0.02)",
-                },
+                "discrepancy": {"type": "number", "description": "Discrepancy value"},
+                "tolerance": {"type": "number", "description": "Max difference (default 0.02)"},
             },
             "required": ["discrepancy"],
         },
     },
     {
         "name": "find_unassigned_items",
-        "description": "Find receipt items that are not assigned to any participant. Returns a list of unassigned item names.",
+        "description": "Find items not assigned to any participant",
         "input_schema": {
             "type": "object",
             "properties": {
-                "bill_split_json": {
-                    "type": "string",
-                    "description": "JSON string of BillSplit object",
-                },
-                "receipt_data_json": {
-                    "type": "string",
-                    "description": "JSON string of ReceiptData object",
-                },
+                "bill_split_json": {"type": "string", "description": "BillSplit JSON"},
+                "receipt_data_json": {"type": "string", "description": "ReceiptData JSON"},
             },
             "required": ["bill_split_json", "receipt_data_json"],
         },

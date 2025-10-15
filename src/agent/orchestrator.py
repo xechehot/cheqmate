@@ -24,6 +24,7 @@ from src.agent.context_builder import (
 from src.agent.tool_registry import TOOLS
 from src.config import settings
 from src.models.bill import BillSplit, ReceiptData
+from src.observability.phoenix import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,13 @@ class AgentOrchestrator:
             "total_iterations": 0,
             "total_duration_s": 0.0,
         }
-        logger.info("Agent orchestrator initialized with 60s timeout")
+
+        # Initialize OpenTelemetry tracer for agent workflow observability
+        self.tracer = get_tracer("cheqmate.agent")
+
+        logger.info(
+            "Agent orchestrator initialized with 60s timeout and Phoenix tracing"
+        )
 
     async def run(
         self,
@@ -77,182 +84,238 @@ class AgentOrchestrator:
         agent_start_time = time.time()
         logger.info(f"Starting agent orchestration for chat {chat_id}")
 
-        # Increment turn counter
-        agent_context.session.increment_turn()
-
-        # Build conversation messages
-        messages: list[dict[str, Any]] = []
-
-        # Initial user message with state
-        user_prompt = build_user_prompt(agent_context, new_message)
-        messages.append({"role": "user", "content": user_prompt})
-
-        # ReAct loop
-        iteration = 0
-        while iteration < MAX_ITERATIONS:
-            iteration += 1
-            iteration_start_time = time.time()
-            logger.info(
-                f"Agent iteration {iteration}/{MAX_ITERATIONS} for chat {chat_id}"
+        # Start root span for entire agent run
+        with self.tracer.start_as_current_span(
+            "agent_run", openinference_span_kind="agent"
+        ) as agent_span:
+            # Set initial span attributes
+            agent_span.set_attribute("agent.chat_id", str(chat_id))
+            agent_span.set_attribute(
+                "agent.turn_number", agent_context.session.agent_turns + 1
             )
+            if new_message:
+                agent_span.set_attribute("agent.initial_message", new_message[:200])
 
-            try:
-                # 1. REASON: Call Claude with tools (async, non-blocking)
-                # Log conversation size for debugging
-                total_size = sum(len(str(msg)) for msg in messages)
+            # Increment turn counter
+            agent_context.session.increment_turn()
+
+            # Build conversation messages
+            messages: list[dict[str, Any]] = []
+
+            # Initial user message with state
+            user_prompt = build_user_prompt(agent_context, new_message)
+            messages.append({"role": "user", "content": user_prompt})
+
+            # ReAct loop
+            iteration = 0
+            while iteration < MAX_ITERATIONS:
+                iteration += 1
+                iteration_start_time = time.time()
                 logger.info(
-                    f"Calling Claude API: {len(messages)} messages, "
-                    f"~{total_size} chars total"
+                    f"Agent iteration {iteration}/{MAX_ITERATIONS} for chat {chat_id}"
                 )
 
-                # Async API call - enables concurrent request handling
-                response = await self.client.messages.create(
-                    model=ANTHROPIC_MODEL,
-                    max_tokens=4096,
-                    system=build_system_prompt(),
-                    messages=messages,
-                    tools=TOOLS,
-                )
+                # Create span for this iteration
+                with self.tracer.start_as_current_span(
+                    f"agent_iteration_{iteration}", openinference_span_kind="chain"
+                ) as iteration_span:
+                    iteration_span.set_attribute("agent.iteration", iteration)
+                    iteration_span.set_attribute("agent.chat_id", str(chat_id))
 
-                logger.info(f"Claude API returned: stop_reason={response.stop_reason}")
-                logger.debug(f"Claude response stop_reason: {response.stop_reason}")
-
-                # Check for final answer (no tool use)
-                if response.stop_reason == "end_turn":
-                    # Agent finished - extract final text if any
-                    final_text = ""
-                    for block in response.content:
-                        if block.type == "text":
-                            final_text += block.text
-
-                    if final_text:
+                    try:
+                        # 1. REASON: Call Claude with tools (async, non-blocking)
+                        # Log conversation size for debugging
+                        total_size = sum(len(str(msg)) for msg in messages)
                         logger.info(
-                            f"Agent completed task for chat {chat_id} with message"
+                            f"Calling Claude API: {len(messages)} messages, "
+                            f"~{total_size} chars total"
                         )
-                        # Agent provided final message, but tools should have handled communication
-                        # Log it for debugging
-                        logger.debug(f"Agent final message: {final_text}")
-                    else:
-                        logger.info(f"Agent completed task silently for chat {chat_id}")
 
-                    # Task complete
-                    break
+                        # Async API call - enables concurrent request handling
+                        response = await self.client.messages.create(
+                            model=ANTHROPIC_MODEL,
+                            max_tokens=4096,
+                            system=build_system_prompt(),
+                            messages=messages,
+                            tools=TOOLS,
+                        )
 
-                # Extract tool use blocks
-                tool_use_blocks = [
-                    block for block in response.content if block.type == "tool_use"
-                ]
-                text_blocks = [
-                    block for block in response.content if block.type == "text"
-                ]
+                        logger.info(
+                            f"Claude API returned: stop_reason={response.stop_reason}"
+                        )
+                        logger.debug(
+                            f"Claude response stop_reason: {response.stop_reason}"
+                        )
 
-                # Log agent reasoning
-                for block in text_blocks:
-                    logger.debug(f"Agent reasoning: {block.text}")
+                        # Check for final answer (no tool use)
+                        if response.stop_reason == "end_turn":
+                            # Agent finished - extract final text if any
+                            final_text = ""
+                            for block in response.content:
+                                if block.type == "text":
+                                    final_text += block.text
 
-                if not tool_use_blocks:
-                    logger.warning(
-                        "No tool use but not end_turn - treating as completion"
-                    )
-                    break
+                            if final_text:
+                                logger.info(
+                                    f"Agent completed task for chat {chat_id} with message"
+                                )
+                                # Agent provided final message, but tools should have handled communication
+                                # Log it for debugging
+                                logger.debug(f"Agent final message: {final_text}")
+                            else:
+                                logger.info(
+                                    f"Agent completed task silently for chat {chat_id}"
+                                )
 
-                # 2. ACT: Execute tools in parallel
-                tool_results = await self._execute_tools(
-                    tool_use_blocks=tool_use_blocks,
-                    agent_context=agent_context,
-                )
+                            # Task complete
+                            break
 
-                # 3. OBSERVE: Add assistant message and tool results to conversation
-                messages.append({"role": "assistant", "content": response.content})
+                        # Extract tool use blocks
+                        tool_use_blocks = [
+                            block
+                            for block in response.content
+                            if block.type == "tool_use"
+                        ]
+                        text_blocks = [
+                            block for block in response.content if block.type == "text"
+                        ]
 
-                messages.append({"role": "user", "content": tool_results})
+                        # Log agent reasoning
+                        for block in text_blocks:
+                            logger.debug(f"Agent reasoning: {block.text}")
 
-                # Log iteration duration
-                iteration_duration = time.time() - iteration_start_time
-                logger.info(
-                    f"Iteration {iteration} completed in {iteration_duration:.2f}s"
-                )
-                if iteration_duration > 10.0:
-                    logger.warning(
-                        f"Slow iteration detected: {iteration_duration:.2f}s (threshold: 10s)"
-                    )
+                        if not tool_use_blocks:
+                            logger.warning(
+                                "No tool use but not end_turn - treating as completion"
+                            )
+                            break
 
-            except Exception as e:
+                        # 2. ACT: Execute tools in parallel
+                        tool_results = await self._execute_tools(
+                            tool_use_blocks=tool_use_blocks,
+                            agent_context=agent_context,
+                        )
+
+                        # 3. OBSERVE: Add assistant message and tool results to conversation
+                        messages.append(
+                            {"role": "assistant", "content": response.content}
+                        )
+
+                        messages.append({"role": "user", "content": tool_results})
+
+                        # Log iteration duration
+                        iteration_duration = time.time() - iteration_start_time
+                        logger.info(
+                            f"Iteration {iteration} completed in {iteration_duration:.2f}s"
+                        )
+                        if iteration_duration > 10.0:
+                            logger.warning(
+                                f"Slow iteration detected: {iteration_duration:.2f}s (threshold: 10s)"
+                            )
+
+                        # Set iteration span attributes
+                        iteration_span.set_attribute(
+                            "agent.iteration_duration_seconds", iteration_duration
+                        )
+                        iteration_span.set_attribute(
+                            "agent.stop_reason", response.stop_reason
+                        )
+                        iteration_span.set_attribute(
+                            "agent.num_tools_called", len(tool_use_blocks)
+                        )
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error in agent loop for chat {chat_id}: {e}",
+                            exc_info=True,
+                        )
+
+                        # Record error in session
+                        agent_context.session.record_error(str(e))
+
+                        # Send error to user
+                        from src.tools.user_interaction import send_error_message
+
+                        await send_error_message(
+                            chat_id=chat_id,
+                            error=str(e),
+                            context=agent_context.telegram_context,
+                        )
+
+                        # Reset session
+                        agent_context.session.reset()
+
+                        # Set error attributes on span
+                        iteration_span.set_attribute("error", True)
+                        iteration_span.set_attribute("error.message", str(e))
+                        break
+
+            if iteration >= MAX_ITERATIONS:
                 logger.error(
-                    f"Error in agent loop for chat {chat_id}: {e}", exc_info=True
+                    f"Agent hit max iterations ({MAX_ITERATIONS}) for chat {chat_id}"
                 )
-
-                # Record error in session
-                agent_context.session.record_error(str(e))
-
-                # Send error to user
                 from src.tools.user_interaction import send_error_message
 
                 await send_error_message(
                     chat_id=chat_id,
-                    error=str(e),
+                    error="Processing took too many steps. Please try again with /new_bill",
                     context=agent_context.telegram_context,
                 )
-
-                # Reset session
                 agent_context.session.reset()
-                break
 
-        if iteration >= MAX_ITERATIONS:
-            logger.error(
-                f"Agent hit max iterations ({MAX_ITERATIONS}) for chat {chat_id}"
+            # Log total agent run duration
+            total_duration = time.time() - agent_start_time
+
+            # Update performance metrics
+            self.metrics["total_runs"] += 1
+            self.metrics["total_iterations"] += iteration
+            self.metrics["total_duration_s"] += total_duration
+
+            # Determine if run was successful (completed normally, not hit max iterations or error)
+            if iteration < MAX_ITERATIONS:
+                self.metrics["successful_runs"] += 1
+                success_status = "SUCCESS"
+            else:
+                self.metrics["failed_runs"] += 1
+                success_status = "FAILED"
+
+            # Calculate running averages
+            avg_iterations = (
+                self.metrics["total_iterations"] / self.metrics["total_runs"]
             )
-            from src.tools.user_interaction import send_error_message
+            avg_duration = self.metrics["total_duration_s"] / self.metrics["total_runs"]
+            success_rate = (
+                self.metrics["successful_runs"] / self.metrics["total_runs"]
+            ) * 100
 
-            await send_error_message(
-                chat_id=chat_id,
-                error="Processing took too many steps. Please try again with /new_bill",
-                context=agent_context.telegram_context,
+            logger.info(
+                f"Agent orchestration completed for chat {chat_id}: {success_status} "
+                f"in {total_duration:.2f}s ({iteration} iterations)"
             )
-            agent_context.session.reset()
-
-        # Log total agent run duration
-        total_duration = time.time() - agent_start_time
-
-        # Update performance metrics
-        self.metrics["total_runs"] += 1
-        self.metrics["total_iterations"] += iteration
-        self.metrics["total_duration_s"] += total_duration
-
-        # Determine if run was successful (completed normally, not hit max iterations or error)
-        if iteration < MAX_ITERATIONS:
-            self.metrics["successful_runs"] += 1
-            success_status = "SUCCESS"
-        else:
-            self.metrics["failed_runs"] += 1
-            success_status = "FAILED"
-
-        # Calculate running averages
-        avg_iterations = self.metrics["total_iterations"] / self.metrics["total_runs"]
-        avg_duration = self.metrics["total_duration_s"] / self.metrics["total_runs"]
-        success_rate = (
-            self.metrics["successful_runs"] / self.metrics["total_runs"]
-        ) * 100
-
-        logger.info(
-            f"Agent orchestration completed for chat {chat_id}: {success_status} "
-            f"in {total_duration:.2f}s ({iteration} iterations)"
-        )
-        logger.info(
-            f"Performance metrics: success_rate={success_rate:.1f}%, "
-            f"avg_iterations={avg_iterations:.1f}, avg_duration={avg_duration:.1f}s "
-            f"(total_runs={self.metrics['total_runs']})"
-        )
-
-        # Alert on performance degradation
-        if success_rate < 50 and self.metrics["total_runs"] >= 5:
-            logger.warning(
-                f"⚠️  Low success rate detected: {success_rate:.1f}% over {self.metrics['total_runs']} runs"
+            logger.info(
+                f"Performance metrics: success_rate={success_rate:.1f}%, "
+                f"avg_iterations={avg_iterations:.1f}, avg_duration={avg_duration:.1f}s "
+                f"(total_runs={self.metrics['total_runs']})"
             )
-        if avg_duration > 30 and self.metrics["total_runs"] >= 5:
-            logger.warning(
-                f"⚠️  Slow execution detected: avg {avg_duration:.1f}s over {self.metrics['total_runs']} runs"
-            )
+
+            # Alert on performance degradation
+            if success_rate < 50 and self.metrics["total_runs"] >= 5:
+                logger.warning(
+                    f"⚠️  Low success rate detected: {success_rate:.1f}% over {self.metrics['total_runs']} runs"
+                )
+            if avg_duration > 30 and self.metrics["total_runs"] >= 5:
+                logger.warning(
+                    f"⚠️  Slow execution detected: avg {avg_duration:.1f}s over {self.metrics['total_runs']} runs"
+                )
+
+            # Set final span attributes
+            agent_span.set_attribute("agent.total_iterations", iteration)
+            agent_span.set_attribute("agent.duration_seconds", total_duration)
+            agent_span.set_attribute("agent.success", iteration < MAX_ITERATIONS)
+            if iteration >= MAX_ITERATIONS:
+                agent_span.set_attribute("agent.stop_reason", "max_iterations")
+            else:
+                agent_span.set_attribute("agent.stop_reason", "completed")
 
     async def _execute_tools(
         self,
@@ -269,52 +332,70 @@ class AgentOrchestrator:
         Returns:
             List of tool result blocks for next message to Claude
         """
-        tool_results = []
+        batch_start_time = time.time()
 
-        # Prepare tool context for execution
-        tool_context = agent_context.to_tool_context()
+        # Create span for batch tool execution
+        with self.tracer.start_as_current_span(
+            "tool_execution_batch", openinference_span_kind="chain"
+        ) as batch_span:
+            batch_span.set_attribute("tool.batch_size", len(tool_use_blocks))
+            batch_span.set_attribute(
+                "tool.names", ", ".join([block.name for block in tool_use_blocks])
+            )
 
-        # Execute tools in parallel
-        tasks = []
-        for tool_block in tool_use_blocks:
-            task = self._execute_single_tool(tool_block, tool_context)
-            tasks.append(task)
+            tool_results = []
 
-        # Wait for all tools to complete
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Prepare tool context for execution
+            tool_context = agent_context.to_tool_context()
 
-        # Format results for Claude
-        for tool_block, result in zip(tool_use_blocks, results):
-            if isinstance(result, Exception):
-                logger.error(f"Tool {tool_block.name} failed: {result}")
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_block.id,
-                        "content": f"Error: {str(result)}",
-                        "is_error": True,
-                    }
-                )
-            else:
-                result_str = str(result)
-                result_size = len(result_str)
+            # Execute tools in parallel
+            tasks = []
+            for tool_block in tool_use_blocks:
+                task = self._execute_single_tool(tool_block, tool_context)
+                tasks.append(task)
 
-                # Log result size for monitoring
-                if result_size > 10000:
-                    logger.debug(
-                        f"Tool {tool_block.name} returned large result: {result_size} bytes "
-                        f"({result_size / 1024:.1f} KB)"
+            # Wait for all tools to complete
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Format results for Claude
+            for tool_block, result in zip(tool_use_blocks, results):
+                if isinstance(result, Exception):
+                    logger.error(f"Tool {tool_block.name} failed: {result}")
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_block.id,
+                            "content": f"Error: {str(result)}",
+                            "is_error": True,
+                        }
+                    )
+                else:
+                    result_str = str(result)
+                    result_size = len(result_str)
+
+                    # Log result size for monitoring
+                    if result_size > 10000:
+                        logger.debug(
+                            f"Tool {tool_block.name} returned large result: {result_size} bytes "
+                            f"({result_size / 1024:.1f} KB)"
+                        )
+
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_block.id,
+                            "content": result_str,
+                        }
                     )
 
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_block.id,
-                        "content": result_str,
-                    }
-                )
+            # Set batch span attributes
+            batch_duration = time.time() - batch_start_time
+            num_errors = sum(1 for r in results if isinstance(r, Exception))
+            batch_span.set_attribute("tool.batch_duration_seconds", batch_duration)
+            batch_span.set_attribute("tool.num_errors", num_errors)
+            batch_span.set_attribute("tool.num_success", len(results) - num_errors)
 
-        return tool_results
+            return tool_results
 
     async def _execute_single_tool(
         self,
@@ -345,51 +426,86 @@ class AgentOrchestrator:
         logger.info(f"Executing tool: {tool_name}")
         logger.debug(f"Tool input: {tool_input}")
 
-        # Retry logic for transient errors
-        max_retries = 3
-        backoff = 1.0
-        last_error = None
+        # Create span for individual tool execution
+        with self.tracer.start_as_current_span(
+            tool_name, openinference_span_kind="tool"
+        ) as tool_span:
+            tool_span.set_attribute("tool.name", tool_name)
+            # Truncate input to avoid huge spans
+            input_str = str(tool_input)
+            if len(input_str) > 500:
+                input_str = input_str[:500] + "... (truncated)"
+            tool_span.set_attribute("tool.input", input_str)
 
-        for attempt in range(max_retries):
-            try:
-                return await self._execute_tool_once(
-                    tool_name=tool_name,
-                    tool_input=tool_input,
-                    tool_context=tool_context,
-                    tool_start_time=tool_start_time,
-                )
-            except Exception as e:
-                last_error = e
-                error_type = type(e).__name__
+            # Retry logic for transient errors
+            max_retries = 3
+            backoff = 1.0
+            last_error = None
+            attempts_made = 0
 
-                # Check if error is retryable
-                is_retryable = self._is_retryable_error(e)
-
-                if is_retryable and attempt < max_retries - 1:
-                    logger.warning(
-                        f"Tool {tool_name} failed with {error_type} (attempt {attempt + 1}/{max_retries}). "
-                        f"Retrying in {backoff}s... Error: {str(e)[:100]}"
+            for attempt in range(max_retries):
+                attempts_made = attempt + 1
+                try:
+                    result = await self._execute_tool_once(
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        tool_context=tool_context,
+                        tool_start_time=tool_start_time,
                     )
-                    await asyncio.sleep(backoff)
-                    backoff *= 2  # Exponential backoff
-                else:
-                    # Not retryable or final attempt - raise error
-                    if is_retryable:
-                        logger.error(
-                            f"Tool {tool_name} failed after {max_retries} attempts: {e}\n"
-                            f"Tool input: {tool_input}\n"
-                            f"Error type: {error_type}"
-                        )
-                    else:
-                        logger.error(
-                            f"Tool {tool_name} failed with non-retryable error: {e}\n"
-                            f"Tool input: {tool_input}\n"
-                            f"Error type: {error_type}"
-                        )
-                    raise
 
-        # Should never reach here, but just in case
-        raise last_error if last_error else RuntimeError("Tool execution failed")
+                    # Set success attributes
+                    tool_duration = time.time() - tool_start_time
+                    tool_span.set_attribute("tool.duration_seconds", tool_duration)
+                    tool_span.set_attribute("tool.attempts", attempts_made)
+                    tool_span.set_attribute("tool.success", True)
+
+                    return result
+
+                except Exception as e:
+                    last_error = e
+                    error_type = type(e).__name__
+
+                    # Check if error is retryable
+                    is_retryable = self._is_retryable_error(e)
+
+                    if is_retryable and attempt < max_retries - 1:
+                        logger.warning(
+                            f"Tool {tool_name} failed with {error_type} (attempt {attempt + 1}/{max_retries}). "
+                            f"Retrying in {backoff}s... Error: {str(e)[:100]}"
+                        )
+                        await asyncio.sleep(backoff)
+                        backoff *= 2  # Exponential backoff
+                    else:
+                        # Not retryable or final attempt - set error and raise
+                        tool_duration = time.time() - tool_start_time
+                        tool_span.set_attribute("tool.duration_seconds", tool_duration)
+                        tool_span.set_attribute("tool.attempts", attempts_made)
+                        tool_span.set_attribute("tool.success", False)
+                        tool_span.set_attribute("tool.error", True)
+                        tool_span.set_attribute("tool.error_type", error_type)
+                        tool_span.set_attribute("tool.error_message", str(e)[:500])
+
+                        if is_retryable:
+                            logger.error(
+                                f"Tool {tool_name} failed after {max_retries} attempts: {e}\n"
+                                f"Tool input: {tool_input}\n"
+                                f"Error type: {error_type}"
+                            )
+                        else:
+                            logger.error(
+                                f"Tool {tool_name} failed with non-retryable error: {e}\n"
+                                f"Tool input: {tool_input}\n"
+                                f"Error type: {error_type}"
+                            )
+                        raise
+
+            # Should never reach here, but just in case
+            tool_span.set_attribute("tool.success", False)
+            tool_span.set_attribute("tool.error", True)
+            tool_span.set_attribute(
+                "tool.error_message", "Tool execution failed after all retries"
+            )
+            raise last_error if last_error else RuntimeError("Tool execution failed")
 
     def _is_retryable_error(self, error: Exception) -> bool:
         """

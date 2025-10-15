@@ -83,12 +83,9 @@ def sample_participant_shares(sample_receipt_items):
 @pytest.fixture
 def sample_bill_split(sample_receipt_items, sample_participant_shares):
     """Sample BillSplit object for testing."""
-    total = sum(item.total_price for item in sample_receipt_items)
     return BillSplit(
         participants=sample_participant_shares,
         receipt_items=sample_receipt_items,
-        currency="USD",
-        total=total,
     )
 
 

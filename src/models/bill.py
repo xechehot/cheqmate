@@ -223,12 +223,20 @@ class BillSplit(BaseModel):
         description="List of all participants and their shares"
     )
     receipt_items: list[ReceiptItem] = Field(description="All items from the receipt")
-    currency: str = Field(description="ISO 4217 currency code (e.g., USD, KZT, EUR)")
-    total: Decimal = Field(description="Total of the bill")
 
-    def format_summary(self, title: str = "Bill Split Summary") -> str:
-        """Format the bill split as a human-readable summary."""
-        symbol = get_currency_symbol(self.currency)
+    def format_summary(
+        self, receipt_data: "ReceiptData", title: str = "Bill Split Summary"
+    ) -> str:
+        """Format the bill split as a human-readable summary.
+
+        Args:
+            receipt_data: Original receipt data for currency and total display
+            title: Title for the summary
+
+        Returns:
+            Formatted summary string
+        """
+        symbol = get_currency_symbol(receipt_data.currency)
         lines = [f"🧾 **{title}**\n"]
 
         # Receipt items (escape names to prevent Markdown parsing errors)
@@ -241,7 +249,7 @@ class BillSplit(BaseModel):
         lines.append("")
 
         # Totals
-        lines.append(f"**Total: {symbol}{self.total:,.2f}**")
+        lines.append(f"**Total: {symbol}{receipt_data.total:,.2f}**")
 
         lines.append("")
         lines.append("---")

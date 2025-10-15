@@ -421,8 +421,6 @@ Important:
             bill_split = BillSplit(
                 participants=participants,
                 receipt_items=receipt_data.items,
-                currency=receipt_data.currency,
-                total=receipt_data.total,
             )
 
             logger.info(
@@ -594,8 +592,6 @@ Output ONLY a valid JSON object with this structure (no markdown, no explanation
             refined_split = BillSplit(
                 participants=refined_participants,
                 receipt_items=receipt_data.items,
-                currency=receipt_data.currency,
-                total=receipt_data.total,
             )
 
             # Recalculate totals after refinement to verify it worked

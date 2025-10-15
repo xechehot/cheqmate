@@ -64,14 +64,15 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "send_formatted_split",
-        "description": "Send formatted split summary. Use after create_initial_bill_split and refine_split_with_llm",
+        "description": "Send formatted split summary. Use after create_initial_bill_split and refine_split_with_llm. Requires both bill_split_json and receipt_data_json for display.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "bill_split_json": {"type": "string", "description": "BillSplit JSON"},
+                "receipt_data_json": {"type": "string", "description": "ReceiptData JSON from session (for currency/total display)"},
                 "title": {"type": "string", "description": "Title (default: 'Bill Split - Draft')"},
             },
-            "required": ["bill_split_json"],
+            "required": ["bill_split_json", "receipt_data_json"],
         },
     },
     # ===== LLM PROCESSING TOOLS (3) =====

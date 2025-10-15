@@ -289,8 +289,6 @@ Output ONLY a valid JSON object with this structure (no markdown, no explanation
             refined_split = BillSplit(
                 participants=refined_participants,
                 receipt_items=receipt_data.items,
-                currency=receipt_data.currency,
-                total=receipt_data.total,
             )
 
             explanation = refined_data.get("explanation", "Split refined for accuracy")

@@ -61,8 +61,6 @@ class TestCalculateAllParticipantTotals:
         bill_split = BillSplit(
             participants=[participant],
             receipt_items=sample_receipt_items,
-            currency="USD",
-            total=Decimal("40.00"),
         )
 
         totals = calculate_all_participant_totals(bill_split)
@@ -102,8 +100,6 @@ class TestCalculateAllParticipantTotals:
         bill_split = BillSplit(
             participants=participants,
             receipt_items=sample_receipt_items,
-            currency="USD",
-            total=Decimal("40.00"),
         )
 
         totals = calculate_all_participant_totals(bill_split)
@@ -128,8 +124,6 @@ class TestCalculateAllParticipantTotals:
         bill_split = BillSplit(
             participants=[participant],
             receipt_items=sample_receipt_items,
-            currency="USD",
-            total=Decimal("40.00"),
         )
 
         with pytest.raises(ValueError, match="Could not match item"):
@@ -187,8 +181,6 @@ class TestCalculateTotalDiscrepancy:
         bill_split = BillSplit(
             participants=participants,
             receipt_items=sample_receipt_items,
-            currency="USD",
-            total=Decimal("43.00"),
         )
 
         discrepancy = calculate_total_discrepancy(bill_split, Decimal("43.00"))
@@ -219,8 +211,6 @@ class TestCalculateTotalDiscrepancy:
         bill_split = BillSplit(
             participants=participants,
             receipt_items=sample_receipt_items,
-            currency="USD",
-            total=Decimal("43.00"),
         )
 
         discrepancy = calculate_total_discrepancy(bill_split, Decimal("43.00"))
@@ -441,8 +431,6 @@ class TestReceiptDataSubtotalAutoComputation:
         bill_split = BillSplit(
             participants=participants,
             receipt_items=sample_receipt_items,
-            currency="USD",
-            total=Decimal("43.00"),
         )
 
         # Should work without validation errors

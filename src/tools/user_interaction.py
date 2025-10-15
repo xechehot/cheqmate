@@ -197,6 +197,7 @@ async def send_formatted_receipt(
 async def send_formatted_split(
     chat_id: int,
     bill_split: "BillSplit",
+    receipt_data: "ReceiptData",
     context: ContextTypes.DEFAULT_TYPE,
     title: str = "Bill Split - Draft",
 ) -> None:
@@ -210,19 +211,20 @@ async def send_formatted_split(
     Args:
         chat_id: Telegram chat ID
         bill_split: BillSplit object (deserialized by orchestrator)
+        receipt_data: ReceiptData object for currency and total display
         context: Telegram context
         title: Optional title for the split summary (default: "Bill Split - Draft")
     """
     try:
         # Format using the model's format_summary method
-        formatted_text = bill_split.format_summary(title=title)
+        formatted_text = bill_split.format_summary(receipt_data, title=title)
 
         # Send to user with Markdown formatting
         await send_message(chat_id, formatted_text, context, parse_mode="Markdown")
 
         logger.info(
             f"Sent formatted split to chat {chat_id}: "
-            f"{len(bill_split.participants)} participants, total {bill_split.total} {bill_split.currency}"
+            f"{len(bill_split.participants)} participants, total {receipt_data.total} {receipt_data.currency}"
         )
     except Exception as e:
         logger.error(f"Failed to send formatted split to chat {chat_id}: {e}")

@@ -264,7 +264,7 @@ class TestSendFormattedSplit:
     @pytest.mark.asyncio
     async def test_send_split_success(self, mock_telegram_context):
         """Test sending formatted bill split."""
-        from src.models.bill import BillSplit
+        from src.models.bill import BillSplit, ReceiptData
 
         bill_split = BillSplit.model_validate_json(
             """
@@ -286,6 +286,17 @@ class TestSendFormattedSplit:
                 "receipt_items": [
                     {"name": "Burger", "price": "12.50", "quantity": 1},
                     {"name": "Fries", "price": "4.00", "quantity": 1}
+                ]
+            }
+            """
+        )
+
+        receipt_data = ReceiptData.model_validate_json(
+            """
+            {
+                "items": [
+                    {"name": "Burger", "price": "12.50", "quantity": 1},
+                    {"name": "Fries", "price": "4.00", "quantity": 1}
                 ],
                 "currency": "USD",
                 "total": "16.50"
@@ -296,6 +307,7 @@ class TestSendFormattedSplit:
         await send_formatted_split(
             chat_id=12345,
             bill_split=bill_split,
+            receipt_data=receipt_data,
             context=mock_telegram_context,
             title="Bill Split - Draft",
         )
@@ -309,7 +321,7 @@ class TestSendFormattedSplit:
     @pytest.mark.asyncio
     async def test_send_split_with_default_title(self, mock_telegram_context):
         """Test sending formatted split with default title."""
-        from src.models.bill import BillSplit
+        from src.models.bill import BillSplit, ReceiptData
 
         bill_split = BillSplit.model_validate_json(
             """
@@ -317,7 +329,15 @@ class TestSendFormattedSplit:
                 "participants": [
                     {"name": "Alice", "items": []}
                 ],
-                "receipt_items": [],
+                "receipt_items": []
+            }
+            """
+        )
+
+        receipt_data = ReceiptData.model_validate_json(
+            """
+            {
+                "items": [],
                 "currency": "USD",
                 "total": "0.00"
             }
@@ -327,6 +347,7 @@ class TestSendFormattedSplit:
         await send_formatted_split(
             chat_id=12345,
             bill_split=bill_split,
+            receipt_data=receipt_data,
             context=mock_telegram_context,
         )
 

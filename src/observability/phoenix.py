@@ -22,12 +22,12 @@ def initialize_phoenix(
     auto_instrument: bool = True,
 ) -> None:
     """
-    Initialize Phoenix tracing with OpenTelemetry instrumentation.
+    Initialize Phoenix tracing using phoenix.otel.register.
 
     This sets up:
-    1. OpenTelemetry tracer provider with OTLP exporter to Phoenix
+    1. OpenInference TracerProvider with OTLP exporter to Phoenix
     2. Auto-instrumentation for Anthropic SDK (captures all API calls)
-    3. Optional: Custom spans for agent iterations and tool execution
+    3. Decorator support for @tracer.agent, @tracer.chain, @tracer.tool
 
     Args:
         endpoint: Phoenix OTLP gRPC endpoint (default: http://localhost:4317)
@@ -43,42 +43,20 @@ def initialize_phoenix(
         return
 
     try:
-        # Import Phoenix OTEL with lazy loading to avoid import errors if not installed
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-            OTLPSpanExporter,
-        )
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from phoenix.otel import register
 
         logger.info(f"Initializing Phoenix tracing with endpoint: {endpoint}")
 
-        # Create resource with service name
-        resource = Resource.create(
-            {
-                "service.name": "cheqmate-agent",
-                "service.version": "0.1.0",
-            }
-        )
-
-        # Create tracer provider
+        # Register Phoenix with OpenInference TracerProvider
+        # This provides decorator support and helper methods
         global _tracer_provider
-        _tracer_provider = TracerProvider(resource=resource)
-
-        # Create OTLP exporter to Phoenix
-        otlp_exporter = OTLPSpanExporter(
+        _tracer_provider = register(
             endpoint=endpoint,
-            insecure=True,  # Use insecure connection for local dev
+            project_name="cheqmate-agent",
+            batch=True,  # Use BatchSpanProcessor for better performance
+            set_global_tracer_provider=True,
+            verbose=False,  # Reduce console output
         )
-
-        # Add batch span processor for better performance
-        span_processor = BatchSpanProcessor(otlp_exporter)
-        _tracer_provider.add_span_processor(span_processor)
-
-        # Set as global tracer provider
-        from opentelemetry import trace
-
-        trace.set_tracer_provider(_tracer_provider)
 
         logger.info("Phoenix tracer provider configured successfully")
 
@@ -140,7 +118,7 @@ def get_tracer(name: str = "cheqmate.agent"):
         name: Name of the tracer (default: "cheqmate.agent")
 
     Returns:
-        OpenTelemetry Tracer instance
+        OpenTelemetry Tracer instance or NoOpTracer if Phoenix not initialized
 
     Example:
         >>> from src.observability.phoenix import get_tracer
@@ -149,21 +127,64 @@ def get_tracer(name: str = "cheqmate.agent"):
         ...     # Your code here
         ...     pass
     """
-    try:
-        from opentelemetry import trace
+    # Check if Phoenix was initialized
+    if _tracer_provider is None:
+        logger.debug("Phoenix not initialized. Returning no-op tracer.")
+        return _NoOpTracer()
 
-        return trace.get_tracer(name)
-    except ImportError:
-        logger.warning("OpenTelemetry not available. Returning no-op tracer.")
-        # Return a no-op tracer that does nothing
+    try:
+        # Get tracer directly from OpenInference TracerProvider
+        # This ensures we get an OpenInference-aware tracer with support for:
+        # - openinference_span_kind parameter
+        # - Decorator methods (@tracer.agent, @tracer.chain, @tracer.tool)
+        # - Span helper methods (span.set_input(), span.set_output())
+        return _tracer_provider.get_tracer(name)
+    except Exception as e:
+        logger.warning(f"Failed to get OpenInference tracer: {e}. Returning no-op tracer.")
         return _NoOpTracer()
 
 
 class _NoOpTracer:
     """No-op tracer for when OpenTelemetry is not available."""
 
-    def start_as_current_span(self, name: str, *args, **kwargs):
-        """No-op context manager."""
+    def start_as_current_span(
+        self, name: str, *, openinference_span_kind=None, **kwargs
+    ):
+        """No-op context manager that returns a no-op span."""
         from contextlib import nullcontext
 
-        return nullcontext()
+        # Return a nullcontext with a no-op span object
+        return nullcontext(enter_result=_NoOpSpan())
+
+    # Decorator methods
+    def agent(self, func):
+        """No-op agent decorator."""
+        return func
+
+    def chain(self, func):
+        """No-op chain decorator."""
+        return func
+
+    def tool(self, func):
+        """No-op tool decorator."""
+        return func
+
+
+class _NoOpSpan:
+    """No-op span for when OpenTelemetry is not available."""
+
+    def set_attribute(self, key: str, value: any) -> None:
+        """No-op attribute setter."""
+        pass
+
+    def set_input(self, value: any) -> None:
+        """No-op input setter."""
+        pass
+
+    def set_output(self, value: any) -> None:
+        """No-op output setter."""
+        pass
+
+    def set_status(self, status: any) -> None:
+        """No-op status setter."""
+        pass

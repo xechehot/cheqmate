@@ -6,7 +6,7 @@ import logging
 import re
 from decimal import Decimal
 
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 
 from src.config import settings
 from src.models.bill import (
@@ -67,13 +67,14 @@ def detect_image_media_type(image_bytes: bytes) -> str:
 
 
 class AnthropicService:
-    """Service for interacting with Anthropic's Claude API."""
+    """Service for interacting with Anthropic's Claude API using async client."""
 
     def __init__(self) -> None:
-        """Initialize the Anthropic service."""
+        """Initialize the Anthropic service with async client."""
         if not settings.anthropic_api_key:
             raise ValueError("Anthropic API key is required")
-        self.client = Anthropic(api_key=settings.anthropic_api_key)
+        # Using AsyncAnthropic for non-blocking I/O operations
+        self.client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     def _log_api_error(self, operation: str, error: Exception, context_size_kb: float = 0) -> None:
         """
@@ -190,12 +191,13 @@ For currency, use ISO 4217 codes:
 - ₹ or rupees → INR
 If unclear, use USD as default."""
 
-        # Call Claude API with vision and response prefilling
+        # Call Claude API with vision and response prefilling (async, non-blocking)
         try:
             import time
             start_time = time.time()
 
-            message = self.client.messages.create(
+            # Async API call enables concurrent OCR operations for multiple users
+            message = await self.client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=2048,
                 messages=[
@@ -352,12 +354,13 @@ Important:
 - For shared items, ensure denominators add up correctly (e.g., if 2 people share, both get 1/2)
 - Use only the item names, numerators, and denominators - no totals"""
 
-        # Call Claude API with response prefilling (text-only, no image)
+        # Call Claude API with response prefilling (text-only, no image, async)
         try:
             import time
             start_time = time.time()
 
-            message = self.client.messages.create(
+            # Async API call enables concurrent split operations for multiple users
+            message = await self.client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=3072,
                 messages=[
@@ -547,8 +550,8 @@ Output ONLY a valid JSON object with this structure (no markdown, no explanation
   "explanation": "Brief explanation of what was adjusted"
 }}"""
 
-        # Call Claude API for verification
-        message = self.client.messages.create(
+        # Call Claude API for verification (async, non-blocking)
+        message = await self.client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=3072,
             messages=[

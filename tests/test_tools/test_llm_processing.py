@@ -153,12 +153,14 @@ class TestRefineSplitWithLLM:
     """Tests for refine_split_with_llm with mocked Anthropic API."""
 
     @pytest.mark.asyncio
-    @patch("src.services.anthropic_service.Anthropic")
+    @patch("src.services.anthropic_service.AsyncAnthropic")
     async def test_refine_split_success(
         self, mock_anthropic_class, sample_bill_split, sample_receipt_data
     ):
         """Test successful split refinement."""
-        # Mock Anthropic client
+        # Mock AsyncAnthropic client
+        from unittest.mock import AsyncMock
+
         mock_client = Mock()
         mock_anthropic_class.return_value = mock_client
 
@@ -190,7 +192,7 @@ class TestRefineSplitWithLLM:
 }'''
             )
         ]
-        mock_client.messages.create = Mock(return_value=mock_response)
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         # Execute
         refined_split, explanation = await refine_split_with_llm(
@@ -205,18 +207,20 @@ class TestRefineSplitWithLLM:
         mock_client.messages.create.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("src.services.anthropic_service.Anthropic")
+    @patch("src.services.anthropic_service.AsyncAnthropic")
     async def test_refine_split_parsing_error(
         self, mock_anthropic_class, sample_bill_split, sample_receipt_data
     ):
         """Test refinement with invalid JSON response."""
+        from unittest.mock import AsyncMock
+
         mock_client = Mock()
         mock_anthropic_class.return_value = mock_client
 
         # Mock invalid JSON response
         mock_response = Mock()
         mock_response.content = [Mock(text="invalid json {incomplete")]
-        mock_client.messages.create = Mock(return_value=mock_response)
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         with pytest.raises(ValueError, match="Failed to refine bill split"):
             await refine_split_with_llm(
@@ -226,11 +230,13 @@ class TestRefineSplitWithLLM:
             )
 
     @pytest.mark.asyncio
-    @patch("src.services.anthropic_service.Anthropic")
+    @patch("src.services.anthropic_service.AsyncAnthropic")
     async def test_refine_split_calculation_error(
         self, mock_anthropic_class, sample_bill_split, sample_receipt_data
     ):
         """Test refinement when refined items cannot be matched."""
+        from unittest.mock import AsyncMock
+
         mock_client = Mock()
         mock_anthropic_class.return_value = mock_client
 
@@ -251,7 +257,7 @@ class TestRefineSplitWithLLM:
 }'''
             )
         ]
-        mock_client.messages.create = Mock(return_value=mock_response)
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         with pytest.raises(ValueError, match="Cannot refine split due to item matching error|Failed to refine bill split"):
             await refine_split_with_llm(

@@ -14,7 +14,7 @@ import time
 from decimal import Decimal
 from typing import Any
 
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 
 from src.agent.context_builder import (
     AgentContext,
@@ -36,11 +36,12 @@ class AgentOrchestrator:
     """Orchestrates the bill splitting workflow using Claude agent with tools."""
 
     def __init__(self):
-        """Initialize the orchestrator with Anthropic client."""
+        """Initialize the orchestrator with async Anthropic client."""
         if not settings.anthropic_api_key:
             raise ValueError("Anthropic API key is required")
-        # Initialize client with 60 second timeout to prevent hanging
-        self.client = Anthropic(
+        # Initialize async client with 60 second timeout to prevent hanging
+        # Using AsyncAnthropic enables true non-blocking I/O for concurrent request handling
+        self.client = AsyncAnthropic(
             api_key=settings.anthropic_api_key,
             timeout=60.0,  # 60 second timeout for API calls
         )
@@ -96,7 +97,7 @@ class AgentOrchestrator:
             )
 
             try:
-                # 1. REASON: Call Claude with tools
+                # 1. REASON: Call Claude with tools (async, non-blocking)
                 # Log conversation size for debugging
                 total_size = sum(len(str(msg)) for msg in messages)
                 logger.info(
@@ -104,7 +105,8 @@ class AgentOrchestrator:
                     f"~{total_size} chars total"
                 )
 
-                response = self.client.messages.create(
+                # Async API call - enables concurrent request handling
+                response = await self.client.messages.create(
                     model=ANTHROPIC_MODEL,
                     max_tokens=4096,
                     system=build_system_prompt(),

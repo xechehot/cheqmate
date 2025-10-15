@@ -433,8 +433,8 @@ class TestOrchestratorImageHandling:
                     # Create orchestrator instance
                     orchestrator = Orchestrator()
 
-                    # Mock the orchestrator's Anthropic client
-                    orchestrator.client.messages.create = Mock(
+                    # Mock the orchestrator's AsyncAnthropic client
+                    orchestrator.client.messages.create = AsyncMock(
                         side_effect=mock_messages_create
                     )
 

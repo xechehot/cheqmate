@@ -192,8 +192,8 @@ Output ONLY a valid JSON object with this structure (no markdown, no explanation
   "explanation": "Brief explanation of what was adjusted"
 }}"""
 
-    # Call Claude API for refinement
-    message = service.client.messages.create(
+    # Call Claude API for refinement (async, non-blocking)
+    message = await service.client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=3072,
         messages=[

@@ -12,12 +12,16 @@ from telegram.ext import ContextTypes
 from src.agent.context_builder import AgentContext
 from src.agent.orchestrator import orchestrator
 from src.bot.conversation_manager import conversation_manager
+from src.observability.phoenix import get_tracer
 from src.tools.user_interaction import (
     extract_file_id_from_message,
     get_latest_text_message,
 )
 
 logger = logging.getLogger(__name__)
+
+# Initialize tracer for handler-level observability
+tracer = get_tracer("cheqmate.handlers")
 
 
 async def handle_new_bill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -34,19 +38,27 @@ async def handle_new_bill(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     chat_id = update.effective_chat.id
     logger.info(f"Starting new bill with agent for chat {chat_id}")
 
-    # Reset session
-    session = conversation_manager.get_session(chat_id)
-    session.reset()
+    # Create span for /new_bill handler
+    with tracer.start_as_current_span(
+        "handle_new_bill", openinference_span_kind="chain"
+    ) as span:
+        span.set_attribute("telegram.chat_id", str(chat_id))
+        span.set_attribute("telegram.message_type", "command")
+        span.set_attribute("telegram.command", "/new_bill")
 
-    # Build agent context
-    agent_context = AgentContext(
-        chat_id=chat_id,
-        update=update,
-        context=context,
-    )
+        # Reset session
+        session = conversation_manager.get_session(chat_id)
+        session.reset()
 
-    # Run agent (no new message, just initiated)
-    await orchestrator.run(agent_context=agent_context, new_message=None)
+        # Build agent context
+        agent_context = AgentContext(
+            chat_id=chat_id,
+            update=update,
+            context=context,
+        )
+
+        # Run agent (no new message, just initiated)
+        await orchestrator.run(agent_context=agent_context, new_message=None)
 
 
 async def handle_text_message(
@@ -70,15 +82,24 @@ async def handle_text_message(
 
     logger.info(f"Received text message for chat {chat_id}: {text[:50]}...")
 
-    # Build agent context
-    agent_context = AgentContext(
-        chat_id=chat_id,
-        update=update,
-        context=context,
-    )
+    # Create span for text message handler
+    with tracer.start_as_current_span(
+        "handle_text_message", openinference_span_kind="chain"
+    ) as span:
+        span.set_attribute("telegram.chat_id", str(chat_id))
+        span.set_attribute("telegram.message_type", "text")
+        # Truncate message for span attribute
+        span.set_attribute("telegram.message_preview", text[:100])
 
-    # Run agent with new text
-    await orchestrator.run(agent_context=agent_context, new_message=text)
+        # Build agent context
+        agent_context = AgentContext(
+            chat_id=chat_id,
+            update=update,
+            context=context,
+        )
+
+        # Run agent with new text
+        await orchestrator.run(agent_context=agent_context, new_message=text)
 
 
 async def handle_photo_message(
@@ -102,15 +123,23 @@ async def handle_photo_message(
 
     logger.info(f"Received photo message for chat {chat_id}")
 
-    # Build agent context
-    agent_context = AgentContext(
-        chat_id=chat_id,
-        update=update,
-        context=context,
-    )
+    # Create span for photo message handler
+    with tracer.start_as_current_span(
+        "handle_photo_message", openinference_span_kind="chain"
+    ) as span:
+        span.set_attribute("telegram.chat_id", str(chat_id))
+        span.set_attribute("telegram.message_type", "photo")
+        span.set_attribute("telegram.file_id", file_id)
 
-    # Run agent (photo info is in update, agent will extract it)
-    await orchestrator.run(
-        agent_context=agent_context,
-        new_message=f"[User sent a photo with file_id: {file_id}]",
-    )
+        # Build agent context
+        agent_context = AgentContext(
+            chat_id=chat_id,
+            update=update,
+            context=context,
+        )
+
+        # Run agent (photo info is in update, agent will extract it)
+        await orchestrator.run(
+            agent_context=agent_context,
+            new_message=f"[User sent a photo with file_id: {file_id}]",
+        )

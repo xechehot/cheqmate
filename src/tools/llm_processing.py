@@ -11,12 +11,16 @@ import logging
 from decimal import Decimal
 
 from src.models.bill import BillSplit, ParticipantItem, ParticipantShare, ReceiptData
+from src.observability.phoenix import get_tracer
 from src.services.anthropic_service import (
     AnthropicService,
     extract_json_from_response,
 )
 
 logger = logging.getLogger(__name__)
+
+# Initialize tracer for LLM processing tools
+tracer = get_tracer("cheqmate.llm_processing")
 
 
 async def extract_receipt_ocr(
@@ -39,24 +43,41 @@ async def extract_receipt_ocr(
     Raises:
         ValueError: If OCR extraction fails or no image bytes available
     """
-    # Auto-retrieve from session if not provided
-    if image_bytes is None:
-        from src.bot.conversation_manager import conversation_manager
+    with tracer.start_as_current_span(
+        "extract_receipt_ocr", openinference_span_kind="tool"
+    ) as span:
+        span.set_attribute("llm.operation", "receipt_ocr")
+        span.set_attribute("llm.chat_id", str(chat_id))
 
-        session = conversation_manager.get_session(chat_id)
-        if not session.has_image_bytes():
-            raise ValueError(
-                "No image bytes available. Call download_telegram_photo first or provide image_bytes parameter."
-            )
-        image_bytes = session.image_bytes
-        logger.info("Retrieved cached image bytes from session for OCR")
+        # Auto-retrieve from session if not provided
+        if image_bytes is None:
+            from src.bot.conversation_manager import conversation_manager
 
-    service = AnthropicService()
-    receipt_data = await service.extract_receipt_items(image_bytes)
-    logger.info(
-        f"OCR extracted {len(receipt_data.items)} items in {receipt_data.currency}"
-    )
-    return receipt_data
+            session = conversation_manager.get_session(chat_id)
+            if not session.has_image_bytes():
+                raise ValueError(
+                    "No image bytes available. Call download_telegram_photo first or provide image_bytes parameter."
+                )
+            image_bytes = session.image_bytes
+            logger.info("Retrieved cached image bytes from session for OCR")
+            span.set_attribute("llm.image_source", "session_cache")
+        else:
+            span.set_attribute("llm.image_source", "parameter")
+
+        span.set_attribute("llm.image_size_kb", len(image_bytes) / 1024)
+
+        service = AnthropicService()
+        receipt_data = await service.extract_receipt_items(image_bytes)
+
+        # Set output attributes
+        span.set_attribute("llm.items_extracted", len(receipt_data.items))
+        span.set_attribute("llm.currency", receipt_data.currency)
+        span.set_attribute("llm.receipt_total", float(receipt_data.total))
+
+        logger.info(
+            f"OCR extracted {len(receipt_data.items)} items in {receipt_data.currency}"
+        )
+        return receipt_data
 
 
 async def create_initial_bill_split(
@@ -80,12 +101,29 @@ async def create_initial_bill_split(
     Raises:
         ValueError: If split creation fails
     """
-    service = AnthropicService()
-    bill_split = await service.split_bill(description, receipt_data)
-    logger.info(
-        f"Created initial split with {len(bill_split.participants)} participants"
-    )
-    return bill_split
+    with tracer.start_as_current_span(
+        "create_initial_bill_split", openinference_span_kind="tool"
+    ) as span:
+        span.set_attribute("llm.operation", "bill_split_creation")
+        span.set_attribute("llm.description_length", len(description))
+        span.set_attribute("llm.receipt_items_count", len(receipt_data.items))
+        span.set_attribute("llm.receipt_total", float(receipt_data.total))
+        span.set_attribute("llm.currency", receipt_data.currency)
+
+        service = AnthropicService()
+        bill_split = await service.split_bill(description, receipt_data)
+
+        # Set output attributes
+        span.set_attribute("llm.participants_count", len(bill_split.participants))
+        span.set_attribute(
+            "llm.participant_names",
+            ", ".join([p.name for p in bill_split.participants]),
+        )
+
+        logger.info(
+            f"Created initial split with {len(bill_split.participants)} participants"
+        )
+        return bill_split
 
 
 async def refine_split_with_llm(
@@ -108,47 +146,61 @@ async def refine_split_with_llm(
     Raises:
         ValueError: If refinement fails
     """
-    service = AnthropicService()
+    with tracer.start_as_current_span(
+        "refine_split_with_llm", openinference_span_kind="tool"
+    ) as span:
+        span.set_attribute("llm.operation", "bill_split_refinement")
+        span.set_attribute("llm.participants_count", len(bill_split.participants))
+        span.set_attribute("llm.receipt_items_count", len(receipt_data.items))
+        span.set_attribute("llm.issue_explanation", issue_explanation[:200])
 
-    # Calculate current participant totals for context
-    participant_totals: dict[str, Decimal] = {}
-    for participant in bill_split.participants:
-        try:
-            participant_totals[participant.name] = participant.calculate_total(
-                receipt_data.items
+        service = AnthropicService()
+
+        # Calculate current participant totals for context
+        participant_totals: dict[str, Decimal] = {}
+        for participant in bill_split.participants:
+            try:
+                participant_totals[participant.name] = participant.calculate_total(
+                    receipt_data.items
+                )
+            except ValueError as e:
+                logger.error(f"Calculation error for {participant.name}: {e}")
+                span.set_attribute("llm.error", True)
+                span.set_attribute("llm.error_message", str(e))
+                raise ValueError(f"Cannot refine split due to item matching error: {e}")
+
+        participants_sum = sum(participant_totals.values())
+        total_diff = abs(participants_sum - receipt_data.total)
+
+        # Set discrepancy attributes
+        span.set_attribute("llm.participants_sum", float(participants_sum))
+        span.set_attribute("llm.total_diff", float(total_diff))
+
+        # Format participant data with calculated totals and items
+        participants_text = []
+        for participant in bill_split.participants:
+            items_list = [
+                f"{item.item_name} ({item.item_numerator}/{item.item_denominator})"
+                for item in participant.items
+            ]
+            calculated = participant_totals[participant.name]
+            participants_text.append(
+                f"- {participant.name}:\n"
+                f"  Items: {', '.join(items_list)}\n"
+                f"  Calculated total: {calculated}"
             )
-        except ValueError as e:
-            logger.error(f"Calculation error for {participant.name}: {e}")
-            raise ValueError(f"Cannot refine split due to item matching error: {e}")
 
-    participants_sum = sum(participant_totals.values())
-    total_diff = abs(participants_sum - receipt_data.total)
+        participants_formatted = "\n".join(participants_text)
 
-    # Format participant data with calculated totals and items
-    participants_text = []
-    for participant in bill_split.participants:
-        items_list = [
-            f"{item.item_name} ({item.item_numerator}/{item.item_denominator})"
-            for item in participant.items
-        ]
-        calculated = participant_totals[participant.name]
-        participants_text.append(
-            f"- {participant.name}:\n"
-            f"  Items: {', '.join(items_list)}\n"
-            f"  Calculated total: {calculated}"
+        # Format receipt items for reference
+        receipt_items_text = "\n".join(
+            [
+                f"- {item.name}: {item.price} (x{item.quantity}) = {item.total_price}"
+                for item in receipt_data.items
+            ]
         )
 
-    participants_formatted = "\n".join(participants_text)
-
-    # Format receipt items for reference
-    receipt_items_text = "\n".join(
-        [
-            f"- {item.name}: {item.price} (x{item.quantity}) = {item.total_price}"
-            for item in receipt_data.items
-        ]
-    )
-
-    prompt = f"""You are refining a restaurant bill split for mathematical accuracy.
+        prompt = f"""You are refining a restaurant bill split for mathematical accuracy.
 
 **Receipt Items (GROUND TRUTH):**
 {receipt_items_text}
@@ -192,59 +244,66 @@ Output ONLY a valid JSON object with this structure (no markdown, no explanation
   "explanation": "Brief explanation of what was adjusted"
 }}"""
 
-    # Call Claude API for refinement (async, non-blocking)
-    message = await service.client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=3072,
-        messages=[
-            {"role": "user", "content": prompt},
-            {"role": "assistant", "content": [{"type": "text", "text": "{"}]},
-        ],
-    )
-
-    # Extract and parse response
-    response_text = message.content[0].text if message.content else ""
-    full_response = "{" + response_text
-    logger.info(f"LLM refinement response: {full_response}")
-
-    json_text = extract_json_from_response(full_response)
-
-    try:
-        refined_data = json.loads(json_text)
-
-        # Build refined ParticipantShare objects
-        refined_participants = []
-        for p in refined_data["participants"]:
-            participant_items = [
-                ParticipantItem(
-                    item_name=item["item_name"],
-                    item_numerator=item["item_numerator"],
-                    item_denominator=item["item_denominator"],
-                )
-                for item in p["items"]
-            ]
-
-            refined_participants.append(
-                ParticipantShare(
-                    name=p["name"],
-                    items=participant_items,
-                )
-            )
-
-        # Build refined BillSplit
-        refined_split = BillSplit(
-            participants=refined_participants,
-            receipt_items=receipt_data.items,
-            currency=receipt_data.currency,
-            total=receipt_data.total,
+        # Call Claude API for refinement (async, non-blocking)
+        message = await service.client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=3072,
+            messages=[
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": [{"type": "text", "text": "{"}]},
+            ],
         )
 
-        explanation = refined_data.get("explanation", "Split refined for accuracy")
-        logger.info(f"Successfully refined split: {explanation}")
+        # Extract and parse response
+        response_text = message.content[0].text if message.content else ""
+        full_response = "{" + response_text
+        logger.info(f"LLM refinement response: {full_response}")
 
-        return (refined_split, explanation)
+        json_text = extract_json_from_response(full_response)
 
-    except (json.JSONDecodeError, KeyError, ValueError) as e:
-        logger.error(f"Failed to parse refined split: {e}")
-        logger.error(f"Raw response: {full_response}")
-        raise ValueError(f"Failed to refine bill split: {e}")
+        try:
+            refined_data = json.loads(json_text)
+
+            # Build refined ParticipantShare objects
+            refined_participants = []
+            for p in refined_data["participants"]:
+                participant_items = [
+                    ParticipantItem(
+                        item_name=item["item_name"],
+                        item_numerator=item["item_numerator"],
+                        item_denominator=item["item_denominator"],
+                    )
+                    for item in p["items"]
+                ]
+
+                refined_participants.append(
+                    ParticipantShare(
+                        name=p["name"],
+                        items=participant_items,
+                    )
+                )
+
+            # Build refined BillSplit
+            refined_split = BillSplit(
+                participants=refined_participants,
+                receipt_items=receipt_data.items,
+                currency=receipt_data.currency,
+                total=receipt_data.total,
+            )
+
+            explanation = refined_data.get("explanation", "Split refined for accuracy")
+
+            # Set success attributes
+            span.set_attribute("llm.refined_participants_count", len(refined_participants))
+            span.set_attribute("llm.refinement_explanation", explanation[:200])
+
+            logger.info(f"Successfully refined split: {explanation}")
+
+            return (refined_split, explanation)
+
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.error(f"Failed to parse refined split: {e}")
+            logger.error(f"Raw response: {full_response}")
+            span.set_attribute("llm.error", True)
+            span.set_attribute("llm.error_message", str(e))
+            raise ValueError(f"Failed to refine bill split: {e}")

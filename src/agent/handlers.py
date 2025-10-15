@@ -11,6 +11,7 @@ from telegram.ext import ContextTypes
 
 from src.agent.context_builder import AgentContext
 from src.agent.orchestrator import orchestrator
+from src.agent.workflow_manager import workflow_manager
 from src.bot.conversation_manager import conversation_manager
 from src.observability.phoenix import get_tracer
 from src.tools.user_interaction import (
@@ -26,7 +27,12 @@ tracer = get_tracer("cheqmate.handlers")
 
 async def handle_new_bill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Handle /new_bill command - start agent orchestration.
+    Handle /new_bill command with deterministic workflow.
+
+    This is handled deterministically by the workflow manager:
+    - Reset session
+    - Request participant description
+    - No agent invocation needed
 
     Args:
         update: Telegram update object
@@ -36,7 +42,7 @@ async def handle_new_bill(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     chat_id = update.effective_chat.id
-    logger.info(f"Starting new bill with agent for chat {chat_id}")
+    logger.info(f"Starting new bill for chat {chat_id}")
 
     # Create span for /new_bill handler
     with tracer.start_as_current_span(
@@ -46,19 +52,8 @@ async def handle_new_bill(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         span.set_attribute("telegram.message_type", "command")
         span.set_attribute("telegram.command", "/new_bill")
 
-        # Reset session
-        session = conversation_manager.get_session(chat_id)
-        session.reset()
-
-        # Build agent context
-        agent_context = AgentContext(
-            chat_id=chat_id,
-            update=update,
-            context=context,
-        )
-
-        # Run agent (no new message, just initiated)
-        await orchestrator.run(agent_context=agent_context, new_message=None)
+        # Handle deterministically with workflow manager
+        await workflow_manager.handle_new_bill_command(chat_id, context)
 
 
 async def handle_text_message(
@@ -106,7 +101,10 @@ async def handle_photo_message(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     """
-    Handle photo messages - pass to agent for processing.
+    Handle photo messages with hybrid workflow.
+
+    If no OCR exists: Handled deterministically (download, OCR, send receipt)
+    If OCR exists: Delegate to agent (user might be correcting)
 
     Args:
         update: Telegram update object
@@ -131,6 +129,21 @@ async def handle_photo_message(
         span.set_attribute("telegram.message_type", "photo")
         span.set_attribute("telegram.file_id", file_id)
 
+        # Try deterministic workflow first
+        handled, agent_message = await workflow_manager.handle_photo_message(
+            chat_id, update, context
+        )
+
+        if handled:
+            # Workflow handled it completely
+            logger.info(f"Photo for chat {chat_id} handled deterministically")
+            span.set_attribute("handler.delegated_to_agent", False)
+            return
+
+        # Need agent for complex scenario
+        logger.info(f"Photo for chat {chat_id} delegated to agent")
+        span.set_attribute("handler.delegated_to_agent", True)
+
         # Build agent context
         agent_context = AgentContext(
             chat_id=chat_id,
@@ -138,8 +151,8 @@ async def handle_photo_message(
             context=context,
         )
 
-        # Run agent (photo info is in update, agent will extract it)
+        # Run agent with contextual message
         await orchestrator.run(
             agent_context=agent_context,
-            new_message=f"[User sent a photo with file_id: {file_id}]",
+            new_message=agent_message,
         )

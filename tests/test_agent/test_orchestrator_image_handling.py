@@ -202,17 +202,19 @@ class TestOrchestratorImageHandling:
         """
         Test that receipt images don't leak into conversation history across iterations.
 
-        This simulates a real 6-iteration workflow where:
-        1. User provides description
-        2. Agent downloads photo and runs OCR
-        3. Agent sends formatted receipt
-        4. Agent creates bill split
-        5. Agent runs verification
-        6. Agent completes
+        With HYBRID architecture:
+        - Workflow manager: Handles /new_bill, photo download, and OCR (0 agent iterations)
+        - Agent: Invoked after OCR is complete to create split and verify (3 iterations)
 
-        The test verifies that after the image is downloaded and recognized in iteration 2,
-        it never appears as base64 in subsequent Claude API calls, preventing massive
-        token overconsumption.
+        This simulates the new workflow:
+        1. Agent creates bill split (OCR already done by workflow_manager)
+        2. Agent sends draft and evaluates quality
+        3. Agent completes
+
+        The test verifies that the image downloaded by workflow_manager is:
+        - Cached in session.image_bytes
+        - Never appears as base64 in Claude API calls
+        - Saves ~560KB tokens per iteration
         """
         # Setup: Configure telegram mocks
         mock_telegram_file.download_as_bytearray = AsyncMock(
@@ -221,37 +223,13 @@ class TestOrchestratorImageHandling:
         mock_telegram_context.bot.get_file = AsyncMock(return_value=mock_telegram_file)
 
         # Setup: Prepare mock Anthropic responses for each iteration
+        # Note: Workflow manager already handled /new_bill, photo OCR (0 iterations)
+        # Agent starts with OCR complete, description saved
         iteration_responses = [
-            # Iteration 1: Save description, send status
+            # Iteration 1: Create split (OCR already done by workflow_manager)
             create_tool_use_message(
                 [
-                    (
-                        "save_participant_description",
-                        {"description": "Alice had burger, Bob had salad and fries"},
-                    ),
-                    ("send_processing_status", {"status": "Processing receipt..."}),
-                ]
-            ),
-            # Iteration 2: Get file ID, download photo, run OCR
-            create_tool_use_message(
-                [
-                    ("get_receipt_file_id", {}),
-                    ("download_telegram_photo", {"file_id": "test_file_id_123"}),
-                    ("extract_receipt_ocr", {}),
-                ]
-            ),
-            # Iteration 3: Send formatted receipt
-            create_tool_use_message(
-                [
-                    (
-                        "send_formatted_receipt",
-                        {"receipt_data_json": sample_receipt_data.model_dump_json()},
-                    ),
-                ]
-            ),
-            # Iteration 4: Create split
-            create_tool_use_message(
-                [
+                    ("send_processing_status", {"status": "Creating bill split..."}),
                     (
                         "create_initial_bill_split",
                         {
@@ -261,7 +239,7 @@ class TestOrchestratorImageHandling:
                     ),
                 ]
             ),
-            # Iteration 5: Send formatted split, verify
+            # Iteration 2: Send draft and evaluate quality (NEW consolidated tool)
             create_tool_use_message(
                 [
                     (
@@ -316,20 +294,70 @@ class TestOrchestratorImageHandling:
                                     "currency": "USD",
                                     "total": "37.00",
                                 }
-                            )
+                            ),
+                            "title": "Bill Split - Draft",
                         },
                     ),
                     (
-                        "calculate_all_participant_totals",
+                        "evaluate_split_quality",  # NEW: Replaces calculate + check
                         {
-                            "bill_split_json": "..."  # Simplified for test
+                            "bill_split_json": json.dumps(
+                                {
+                                    "participants": [
+                                        {
+                                            "name": "Alice",
+                                            "items": [
+                                                {
+                                                    "item_name": "Burger",
+                                                    "item_numerator": 1,
+                                                    "item_denominator": 1,
+                                                }
+                                            ],
+                                        },
+                                        {
+                                            "name": "Bob",
+                                            "items": [
+                                                {
+                                                    "item_name": "Salad",
+                                                    "item_numerator": 1,
+                                                    "item_denominator": 1,
+                                                },
+                                                {
+                                                    "item_name": "Fries",
+                                                    "item_numerator": 1,
+                                                    "item_denominator": 1,
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                    "receipt_items": [
+                                        {
+                                            "name": "Burger",
+                                            "price": "15.00",
+                                            "quantity": 1,
+                                        },
+                                        {
+                                            "name": "Salad",
+                                            "price": "12.00",
+                                            "quantity": 1,
+                                        },
+                                        {
+                                            "name": "Fries",
+                                            "price": "5.00",
+                                            "quantity": 2,
+                                        },
+                                    ],
+                                    "currency": "USD",
+                                    "total": "37.00",
+                                }
+                            ),
+                            "receipt_data_json": sample_receipt_data.model_dump_json(),
                         },
                     ),
-                    ("check_accuracy_threshold", {"discrepancy": 0.0}),
                 ]
             ),
-            # Iteration 6: Complete
-            create_end_turn_message("Bill split completed successfully"),
+            # Iteration 3: Complete
+            create_end_turn_message("Bill split completed successfully!"),
         ]
 
         # Define mock function for Anthropic API
@@ -347,25 +375,29 @@ class TestOrchestratorImageHandling:
             response_index += 1
             return response
 
-        # Setup: Mock conversation manager to return a fresh session
+        # Setup: Mock conversation manager to return a session with workflow_manager data
         from src.bot.conversation_manager import conversation_manager
 
         with patch.object(conversation_manager, "get_session") as mock_get_session:
-            # Create a real session to test caching
+            # Create a session pre-populated by workflow_manager
+            # (simulates workflow_manager already handled /new_bill and photo OCR)
             from src.models.agent_state import AgentBillSession
 
             session = AgentBillSession()
-            session.receipt_file_id = "test_file_id_123"  # Pre-populate file ID
+            session.receipt_file_id = "test_file_id_123"  # Set by workflow_manager
+            session.receipt_data = sample_receipt_data  # OCR done by workflow_manager
+            session.image_bytes = sample_receipt_image  # Downloaded by workflow_manager
+            session.participant_description = "Alice had burger, Bob had salad and fries"  # From user
             mock_get_session.return_value = session
 
-            # Mock extract_receipt_ocr to return the sample data
+            # Mock extract_receipt_ocr (shouldn't be called by agent, but keep for compatibility)
             async def mock_extract_receipt_ocr(
                 chat_id: int, image_bytes: bytes | None = None
             ):
-                # Return receipt data (image should be cached in session by this point)
+                # Return receipt data from session cache
                 return sample_receipt_data
 
-            # Replace the function with our mock (patch at the import location used by orchestrator)
+            # Replace the function with our mock
             with patch("src.tools.extract_receipt_ocr", new=mock_extract_receipt_ocr):
                 # Mock AnthropicService for split_bill
                 with patch("src.tools.llm_processing.AnthropicService") as MockService:
@@ -477,10 +509,10 @@ class TestOrchestratorImageHandling:
             "Large conversation indicates image data is being included multiple times."
         )
 
-        # 5. Verify orchestrator completed successfully (6 iterations)
-        # The mock was called 6 times (one per iteration)
-        assert orchestrator.client.messages.create.call_count == 6, (
-            "Orchestrator should complete in 6 iterations"
+        # 5. Verify orchestrator completed successfully (3 iterations with hybrid approach)
+        # The mock was called 3 times (one per iteration)
+        assert orchestrator.client.messages.create.call_count == 3, (
+            "Orchestrator should complete in 3 iterations (hybrid architecture)"
         )
 
         # 7. Log success metrics for reference

@@ -4,11 +4,13 @@ These tools use Anthropic Claude for:
 - Receipt OCR (vision)
 - Bill splitting assignment
 - Split refinement based on discrepancies
+- Quality evaluation
 """
 
 import json
 import logging
 from decimal import Decimal
+from typing import Any
 
 from src.models.bill import BillSplit, ParticipantItem, ParticipantShare, ReceiptData
 from src.observability.phoenix import get_tracer
@@ -307,3 +309,173 @@ Output ONLY a valid JSON object with this structure (no markdown, no explanation
             span.set_attribute("llm.error", True)
             span.set_attribute("llm.error_message", str(e))
             raise ValueError(f"Failed to refine bill split: {e}")
+
+
+async def evaluate_bill_quality_with_llm(
+    bill_split: BillSplit, receipt_data: ReceiptData
+) -> dict[str, Any]:
+    """
+    Use LLM to evaluate the quality of a bill split.
+
+    This provides a qualitative assessment after the quantitative metrics
+    from evaluate_split_quality. The LLM can catch issues that pure math
+    might miss (e.g., illogical assignments, missing items, etc.).
+
+    Args:
+        bill_split: Complete bill split with participant assignments
+        receipt_data: Original receipt data for reference
+
+    Returns:
+        Dictionary with evaluation results:
+        {
+            "overall_quality": "excellent" | "good" | "fair" | "poor",
+            "confidence": float (0-1),
+            "issues": [list of identified issues],
+            "recommendations": [list of recommendations],
+            "assessment": "human-readable summary"
+        }
+
+    Raises:
+        ValueError: If evaluation fails
+    """
+    with tracer.start_as_current_span(
+        "evaluate_bill_quality_with_llm", openinference_span_kind="tool"
+    ) as span:
+        span.set_attribute("llm.operation", "bill_quality_evaluation")
+        span.set_attribute("llm.participants_count", len(bill_split.participants))
+        span.set_attribute("llm.receipt_items_count", len(receipt_data.items))
+
+        service = AnthropicService()
+
+        # Calculate participant totals for context
+        participant_totals: dict[str, Decimal] = {}
+        for participant in bill_split.participants:
+            try:
+                participant_totals[participant.name] = participant.calculate_total(
+                    receipt_data.items
+                )
+            except ValueError as e:
+                logger.error(f"Calculation error for {participant.name}: {e}")
+                span.set_attribute("llm.error", True)
+                span.set_attribute("llm.error_message", str(e))
+                raise ValueError(f"Cannot evaluate split due to item matching error: {e}")
+
+        participants_sum = sum(participant_totals.values())
+        total_diff = abs(participants_sum - receipt_data.total)
+
+        # Format split for evaluation
+        participants_text = []
+        for participant in bill_split.participants:
+            items_list = [
+                f"{item.item_name} ({item.item_numerator}/{item.item_denominator})"
+                for item in participant.items
+            ]
+            calculated = participant_totals[participant.name]
+            participants_text.append(
+                f"- {participant.name}:\n"
+                f"  Items: {', '.join(items_list)}\n"
+                f"  Total: {calculated}"
+            )
+
+        participants_formatted = "\n".join(participants_text)
+
+        # Format receipt items
+        receipt_items_text = "\n".join(
+            [
+                f"- {item.name}: {item.price} (x{item.quantity}) = {item.total_price}"
+                for item in receipt_data.items
+            ]
+        )
+
+        prompt = f"""You are evaluating the quality of a restaurant bill split.
+
+**Receipt Items:**
+{receipt_items_text}
+
+**Receipt Total**: {receipt_data.total} {receipt_data.currency}
+
+**Bill Split:**
+{participants_formatted}
+
+**Mathematical Summary:**
+- Sum of participant totals: {participants_sum}
+- Discrepancy from receipt: {total_diff}
+
+**Task:**
+Evaluate the quality of this bill split. Consider:
+1. Are all items from the receipt assigned to participants?
+2. Do the assignments make logical sense (no obvious errors)?
+3. Is the mathematical accuracy acceptable (discrepancy < 0.02)?
+4. Are shared items properly split (fractions add up correctly)?
+5. Any items that seem incorrectly assigned?
+
+Output ONLY a valid JSON object (no markdown, no explanations):
+{{
+  "overall_quality": "excellent" | "good" | "fair" | "poor",
+  "confidence": 0.95,
+  "issues": ["issue 1", "issue 2"],
+  "recommendations": ["recommendation 1"],
+  "assessment": "Brief overall assessment"
+}}
+
+Quality levels:
+- excellent: Perfect split, no issues, discrepancy < 0.01
+- good: Minor discrepancy or trivial issues, but acceptable
+- fair: Notable issues that should be addressed
+- poor: Significant problems, needs refinement"""
+
+        # Call Claude API for evaluation
+        message = await service.client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2048,
+            messages=[
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": [{"type": "text", "text": "{"}]},
+            ],
+        )
+
+        # Extract and parse response
+        response_text = message.content[0].text if message.content else ""
+        full_response = "{" + response_text
+        logger.info(f"LLM quality evaluation response: {full_response}")
+
+        json_text = extract_json_from_response(full_response)
+
+        try:
+            evaluation = json.loads(json_text)
+
+            # Validate required fields
+            required_fields = [
+                "overall_quality",
+                "confidence",
+                "issues",
+                "recommendations",
+                "assessment",
+            ]
+            missing_fields = [f for f in required_fields if f not in evaluation]
+            if missing_fields:
+                raise ValueError(f"Missing required fields: {missing_fields}")
+
+            # Set success attributes
+            span.set_attribute("llm.evaluation_quality", evaluation["overall_quality"])
+            span.set_attribute("llm.evaluation_confidence", evaluation["confidence"])
+            span.set_attribute("llm.issues_count", len(evaluation["issues"]))
+            span.set_attribute(
+                "llm.recommendations_count", len(evaluation["recommendations"])
+            )
+
+            logger.info(
+                f"LLM evaluation: {evaluation['overall_quality']} "
+                f"(confidence: {evaluation['confidence']}, "
+                f"issues: {len(evaluation['issues'])}, "
+                f"recommendations: {len(evaluation['recommendations'])})"
+            )
+
+            return evaluation
+
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.error(f"Failed to parse quality evaluation: {e}")
+            logger.error(f"Raw response: {full_response}")
+            span.set_attribute("llm.error", True)
+            span.set_attribute("llm.error_message", str(e))
+            raise ValueError(f"Failed to evaluate bill quality: {e}")

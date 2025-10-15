@@ -657,60 +657,34 @@ class AgentOrchestrator:
         from src.tools import (
             # User interaction
             ask_clarification_question,
-            download_telegram_photo,
-            extract_file_id_from_message,
-            get_latest_text_message,
-            request_participant_description,
-            request_receipt_photo,
             send_error_message,
             send_formatted_receipt,
             send_formatted_split,
             send_message,
             send_processing_status,
-            # State management
-            get_participant_description,
-            get_receipt_file_id,
-            save_participant_description,
-            save_receipt_file_id,
             # LLM processing
             create_initial_bill_split,
-            extract_receipt_ocr,
+            evaluate_bill_quality_with_llm,
             refine_split_with_llm,
-            # Calculations
-            calculate_all_participant_totals,
-            calculate_total_discrepancy,
-            check_accuracy_threshold,
-            find_unassigned_items,
+            # Split quality evaluation
+            evaluate_split_quality,
         )
 
-        # Tool dispatch map
+        # Tool dispatch map (reduced from 22 to 10 tools)
         TOOL_MAP = {
-            # User interaction
+            # User interaction (6)
             "send_message": send_message,
-            "request_participant_description": request_participant_description,
-            "request_receipt_photo": request_receipt_photo,
             "ask_clarification_question": ask_clarification_question,
             "send_processing_status": send_processing_status,
             "send_error_message": send_error_message,
             "send_formatted_receipt": send_formatted_receipt,
             "send_formatted_split": send_formatted_split,
-            "download_telegram_photo": download_telegram_photo,
-            "get_latest_text_message": get_latest_text_message,
-            "extract_file_id_from_message": extract_file_id_from_message,
-            # State management
-            "get_participant_description": get_participant_description,
-            "get_receipt_file_id": get_receipt_file_id,
-            "save_participant_description": save_participant_description,
-            "save_receipt_file_id": save_receipt_file_id,
-            # LLM processing
-            "extract_receipt_ocr": extract_receipt_ocr,
+            # LLM processing (3)
             "create_initial_bill_split": create_initial_bill_split,
             "refine_split_with_llm": refine_split_with_llm,
-            # Calculations
-            "calculate_all_participant_totals": calculate_all_participant_totals,
-            "calculate_total_discrepancy": calculate_total_discrepancy,
-            "check_accuracy_threshold": check_accuracy_threshold,
-            "find_unassigned_items": find_unassigned_items,
+            "evaluate_bill_quality_with_llm": evaluate_bill_quality_with_llm,
+            # Split quality evaluation (1 - replaces 4 calculation tools)
+            "evaluate_split_quality": evaluate_split_quality,
         }
 
         tool_func = TOOL_MAP.get(tool_name)
@@ -835,6 +809,10 @@ class AgentOrchestrator:
             # Binary data should be cached in session instead
             size_kb = len(result) / 1024
             return f"Binary data received and cached ({size_kb:.1f} KB)"
+        elif hasattr(result, "to_dict"):
+            # Handle dataclass objects like SplitQualityMetrics
+            # These have a to_dict() method for JSON serialization
+            return json.dumps(result.to_dict())
         elif isinstance(result, dict):
             # Handle dict with Decimal values
             def decimal_default(obj):
@@ -849,6 +827,20 @@ class AgentOrchestrator:
                 return json.dumps([item.model_dump() for item in result])
             else:
                 return json.dumps([str(item) for item in result])
+        elif isinstance(result, tuple):
+            # Handle tuple results (e.g., from refine_split_with_llm)
+            # Convert each element and return as JSON array
+            tuple_list = []
+            for item in result:
+                if isinstance(item, (ReceiptData, BillSplit)):
+                    tuple_list.append(json.loads(item.model_dump_json()))
+                elif hasattr(item, "to_dict"):
+                    tuple_list.append(item.to_dict())
+                elif isinstance(item, (str, int, float, bool)):
+                    tuple_list.append(item)
+                else:
+                    tuple_list.append(str(item))
+            return json.dumps(tuple_list)
         else:
             return str(result)
 

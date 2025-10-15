@@ -6,7 +6,7 @@ import sys
 
 from src.bot import run_bot
 from src.config import settings
-from src.observability import initialize_phoenix, shutdown_phoenix
+from src.observability import shutdown_phoenix
 
 
 def setup_logging() -> None:
@@ -31,18 +31,9 @@ def main() -> None:
     setup_logging()
     logger = logging.getLogger(__name__)
 
-    # Initialize Phoenix tracing for LLM observability
-    try:
-        initialize_phoenix(
-            endpoint=settings.phoenix_collector_endpoint,
-            enabled=settings.phoenix_enabled,
-            auto_instrument=True,
-        )
-        # Register shutdown handler to flush traces on exit
-        atexit.register(shutdown_phoenix)
-    except Exception as e:
-        logger.warning(f"Failed to initialize Phoenix tracing: {e}")
-        logger.info("Continuing without tracing...")
+    # Phoenix tracing initializes automatically on import (see src/observability/phoenix.py)
+    # Register shutdown handler to flush traces on exit
+    atexit.register(shutdown_phoenix)
 
     try:
         logger.info("Starting CheqMate bot application")

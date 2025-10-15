@@ -6,7 +6,8 @@ the bill splitting process. Tools are organized into categories:
 - user_interaction: Telegram I/O (sending/receiving messages)
 - state_management: Session state access
 - llm_processing: AI-powered operations (OCR, splitting, refinement)
-- calculations: Pure Python mathematical operations
+- calculations: Pure Python mathematical operations (deprecated - use split_quality)
+- split_quality: Consolidated quality evaluation (NEW - replaces 4 calculation tools)
 """
 
 from src.tools.calculations import (
@@ -17,9 +18,11 @@ from src.tools.calculations import (
 )
 from src.tools.llm_processing import (
     create_initial_bill_split,
+    evaluate_bill_quality_with_llm,
     extract_receipt_ocr,
     refine_split_with_llm,
 )
+from src.tools.split_quality import SplitQualityMetrics, evaluate_split_quality
 from src.tools.state_management import (
     get_participant_description,
     get_receipt_file_id,
@@ -62,7 +65,11 @@ __all__ = [
     "extract_receipt_ocr",
     "create_initial_bill_split",
     "refine_split_with_llm",
-    # Calculations
+    "evaluate_bill_quality_with_llm",
+    # Split quality (NEW - consolidated)
+    "evaluate_split_quality",
+    "SplitQualityMetrics",
+    # Calculations (DEPRECATED - kept for backward compatibility)
     "calculate_all_participant_totals",
     "calculate_total_discrepancy",
     "check_accuracy_threshold",

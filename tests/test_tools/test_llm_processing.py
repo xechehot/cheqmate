@@ -81,12 +81,19 @@ class TestCreateInitialBillSplit:
     """Tests for create_initial_bill_split with mocked Anthropic API."""
 
     @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.conversation_manager")
     @patch("src.tools.llm_processing.AnthropicService")
     async def test_create_split_success(
-        self, mock_service_class, sample_receipt_data, mock_split_response
+        self, mock_service_class, mock_conversation_manager, sample_receipt_data, mock_split_response
     ):
         """Test successful bill split creation."""
         from unittest.mock import AsyncMock
+
+        # Mock the session to return receipt_data
+        from src.models.agent_state import AgentBillSession
+        mock_session = AgentBillSession()
+        mock_session.receipt_data = sample_receipt_data
+        mock_conversation_manager.get_session.return_value = mock_session
 
         # Mock the service
         mock_service = Mock()
@@ -119,8 +126,8 @@ class TestCreateInitialBillSplit:
         # Execute (TEXT-ONLY - no image needed)
         description = "Alice had burger and half the fries, Bob had salad and half the fries"
         result = await create_initial_bill_split(
+            chat_id=12345,
             description=description,
-            receipt_data=sample_receipt_data,
         )
 
         # Verify
@@ -129,13 +136,23 @@ class TestCreateInitialBillSplit:
         assert result.participants[1].name == "Bob"
         assert len(result.participants[0].items) == 2
 
+        # Verify session was accessed
+        mock_conversation_manager.get_session.assert_called_once_with(12345)
+
         # Verify service was called
         mock_service.split_bill.assert_called_once()
 
     @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.conversation_manager")
     @patch("src.tools.llm_processing.AnthropicService")
-    async def test_create_split_parsing_error(self, mock_service_class, sample_receipt_data):
+    async def test_create_split_parsing_error(self, mock_service_class, mock_conversation_manager, sample_receipt_data):
         """Test split creation with parsing error."""
+        # Mock the session to return receipt_data
+        from src.models.agent_state import AgentBillSession
+        mock_session = AgentBillSession()
+        mock_session.receipt_data = sample_receipt_data
+        mock_conversation_manager.get_session.return_value = mock_session
+
         mock_service = Mock()
         mock_service_class.return_value = mock_service
         mock_service.split_bill = Mock(
@@ -144,8 +161,8 @@ class TestCreateInitialBillSplit:
 
         with pytest.raises(ValueError, match="Failed to parse split response"):
             await create_initial_bill_split(
+                chat_id=12345,
                 description="Alice had burger",
-                receipt_data=sample_receipt_data,
             )
 
 
@@ -271,12 +288,18 @@ class TestIntegration:
     """Integration tests for LLM processing workflow (all mocked)."""
 
     @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.conversation_manager")
     @patch("src.tools.llm_processing.AnthropicService")
     async def test_full_workflow_ocr_to_split(
-        self, mock_service_class, sample_receipt_data, sample_bill_split
+        self, mock_service_class, mock_conversation_manager, sample_receipt_data, sample_bill_split
     ):
         """Test full workflow from OCR to split (all mocked)."""
         from unittest.mock import AsyncMock
+
+        # Mock the session to return receipt_data after OCR
+        from src.models.agent_state import AgentBillSession
+        mock_session = AgentBillSession()
+        mock_conversation_manager.get_session.return_value = mock_session
 
         # Mock service
         mock_service = Mock()
@@ -291,11 +314,14 @@ class TestIntegration:
         # Verify OCR result
         assert receipt_data == sample_receipt_data
 
+        # Store receipt_data in session (simulating what would happen in real workflow)
+        mock_session.receipt_data = receipt_data
+
         # Execute split (TEXT-ONLY - no image needed)
         description = "Alice and Bob split the bill"
         bill_split = await create_initial_bill_split(
+            chat_id=12345,
             description=description,
-            receipt_data=receipt_data,
         )
 
         # Verify split result

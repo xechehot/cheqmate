@@ -234,7 +234,6 @@ class TestOrchestratorImageHandling:
                         "create_initial_bill_split",
                         {
                             "description": "Alice had burger, Bob had salad and fries",
-                            "receipt_data_json": sample_receipt_data.model_dump_json(),
                         },
                     ),
                 ]

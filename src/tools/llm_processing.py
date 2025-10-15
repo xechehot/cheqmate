@@ -12,6 +12,7 @@ import logging
 from decimal import Decimal
 from typing import Any
 
+from src.bot.conversation_manager import conversation_manager
 from src.models.bill import BillSplit, ParticipantItem, ParticipantShare, ReceiptData
 from src.observability.phoenix import get_tracer
 from src.services.anthropic_service import (
@@ -53,8 +54,6 @@ async def extract_receipt_ocr(
 
         # Auto-retrieve from session if not provided
         if image_bytes is None:
-            from src.bot.conversation_manager import conversation_manager
-
             session = conversation_manager.get_session(chat_id)
             if not session.has_image_bytes():
                 raise ValueError(
@@ -82,32 +81,42 @@ async def extract_receipt_ocr(
         return receipt_data
 
 
-async def create_initial_bill_split(
-    description: str, receipt_data: ReceiptData
-) -> BillSplit:
+async def create_initial_bill_split(chat_id: int, description: str) -> BillSplit:
     """
     Create initial bill split by assigning items to participants.
 
-    This is a TEXT-ONLY operation. The receipt_data already contains all necessary
-    information extracted from OCR, so no image is needed.
+    This is a TEXT-ONLY operation. The receipt_data is automatically retrieved
+    from the session (where it was stored by the workflow manager's OCR process).
 
     This is a wrapper around AnthropicService.split_bill.
 
     Args:
+        chat_id: Telegram chat ID (for session retrieval)
         description: User's description of who ate what
-        receipt_data: Complete receipt data including items and totals
 
     Returns:
         BillSplit object with participant assignments
 
     Raises:
-        ValueError: If split creation fails
+        ValueError: If split creation fails or no receipt data available in session
     """
     with tracer.start_as_current_span(
         "create_initial_bill_split", openinference_span_kind="tool"
     ) as span:
         span.set_attribute("llm.operation", "bill_split_creation")
+        span.set_attribute("llm.chat_id", str(chat_id))
         span.set_attribute("llm.description_length", len(description))
+
+        # Auto-retrieve receipt_data from session
+        session = conversation_manager.get_session(chat_id)
+        if not session.has_receipt_data():
+            raise ValueError(
+                "No receipt data available in session. OCR must be completed first."
+            )
+        receipt_data = session.receipt_data
+        logger.info("Retrieved cached receipt data from session for bill split")
+        span.set_attribute("llm.receipt_source", "session_cache")
+
         span.set_attribute("llm.receipt_items_count", len(receipt_data.items))
         span.set_attribute("llm.receipt_total", float(receipt_data.total))
         span.set_attribute("llm.currency", receipt_data.currency)

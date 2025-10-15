@@ -79,14 +79,13 @@ TOOLS: list[dict[str, Any]] = [
     # NOTE: extract_receipt_ocr removed - now automated by workflow manager
     {
         "name": "create_initial_bill_split",
-        "description": "Create bill split from participant description and receipt OCR data. NOTE: OCR is already done by workflow manager, use session data.",
+        "description": "Create bill split from participant description. Receipt data is automatically fetched from session (already extracted by workflow manager's OCR).",
         "input_schema": {
             "type": "object",
             "properties": {
                 "description": {"type": "string", "description": "Who ate what (from user text)"},
-                "receipt_data_json": {"type": "string", "description": "ReceiptData JSON from session"},
             },
-            "required": ["description", "receipt_data_json"],
+            "required": ["description"],
         },
     },
     {

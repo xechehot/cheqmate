@@ -140,7 +140,7 @@ Quality (1): evaluate_split_quality (consolidated - replaces 4 calculation tools
    - receipt_data (from automated OCR)
 
 2. **Create Split**:
-   - Use create_initial_bill_split with description + receipt_data_json
+   - Use create_initial_bill_split with description (receipt_data auto-fetched from session)
    - Show with send_formatted_split "Draft"
 
 3. **Verify (MANDATORY - ONE CALL)**:

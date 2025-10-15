@@ -469,6 +469,48 @@ class AgentOrchestrator:
         # Default to not retrying if unsure
         return False
 
+    def _validate_tool_input(
+        self, tool_name: str, tool_input: dict[str, Any]
+    ) -> str | None:
+        """
+        Validate that tool_input contains all required parameters from tool schema.
+
+        Args:
+            tool_name: Name of the tool to validate
+            tool_input: Input parameters from Claude
+
+        Returns:
+            None if valid, error message string if validation fails
+        """
+        # Look up tool schema from TOOLS registry
+        tool_schema = None
+        for tool in TOOLS:
+            if tool["name"] == tool_name:
+                tool_schema = tool
+                break
+
+        if not tool_schema:
+            # Tool not in registry (shouldn't happen)
+            return None
+
+        # Get required parameters from schema
+        input_schema = tool_schema.get("input_schema", {})
+        required_params = input_schema.get("required", [])
+
+        # Check if all required params are present
+        missing_params = []
+        for param in required_params:
+            if param not in tool_input:
+                missing_params.append(param)
+
+        if missing_params:
+            return (
+                f"Missing required parameter(s): {', '.join(missing_params)}. "
+                f"Required: {', '.join(required_params)}"
+            )
+
+        return None
+
     async def _execute_tool_once(
         self,
         tool_name: str,
@@ -601,6 +643,11 @@ class AgentOrchestrator:
             Exception: Any error from tool execution
         """
         import inspect
+
+        # Validate tool input has all required parameters
+        validation_error = self._validate_tool_input(tool_name, tool_input)
+        if validation_error:
+            raise ValueError(validation_error)
 
         chat_id = tool_context["chat_id"]
         update = tool_context["update"]

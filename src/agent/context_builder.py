@@ -134,7 +134,7 @@ Calculations (4): totals, discrepancy, accuracy check, find unassigned items
 2. **Process**:
    - OCR receipt → send_formatted_receipt (verify with user)
    - Create split → send_formatted_split "Draft" (show progress)
-3. **Verify (MANDATORY)**: Run ALL checks in parallel: calculate_totals, calculate_discrepancy, check_accuracy (0.02), find_unassigned
+3. **Verify (MANDATORY)**: Run ALL checks in parallel: calculate_totals, calculate_discrepancy, check_accuracy (0.02), find_unassigned_items(bill_split_json, receipt_data_json)
 4. **Refine** (if needed): Use refine_split_with_llm with issue details → send_formatted_split "Refined" → re-verify (max 2 attempts)
 5. **Complete**: send_message with final summary
 

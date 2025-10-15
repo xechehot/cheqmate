@@ -190,7 +190,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "find_unassigned_items",
-        "description": "Find items not assigned to any participant",
+        "description": "Find items not assigned to any participant. Requires bill_split_json and receipt_data_json from current session.",
         "input_schema": {
             "type": "object",
             "properties": {

@@ -18,7 +18,6 @@ from src.tools.user_interaction import (
     send_formatted_receipt,
     send_formatted_split,
     send_message,
-    send_processing_status,
 )
 
 
@@ -172,23 +171,6 @@ class TestAskClarificationQuestion:
         call_args = mock_telegram_context.bot.send_message.call_args
         assert "Did Alice share the fries?" in call_args.kwargs["text"]
         assert "clarification" in call_args.kwargs["text"].lower()
-
-
-class TestSendProcessingStatus:
-    """Tests for send_processing_status function."""
-
-    @pytest.mark.asyncio
-    async def test_send_status(self, mock_telegram_context):
-        """Test sending processing status."""
-        await send_processing_status(
-            chat_id=12345,
-            status="⏳ Processing receipt...",
-            context=mock_telegram_context,
-        )
-
-        mock_telegram_context.bot.send_message.assert_called_once()
-        call_args = mock_telegram_context.bot.send_message.call_args
-        assert call_args.kwargs["text"] == "⏳ Processing receipt..."
 
 
 class TestSendErrorMessage:

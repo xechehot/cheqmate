@@ -5,16 +5,17 @@ Defines tools in Anthropic format for the bill splitting agent.
 IMPORTANT: Many tools were removed/automated by the workflow manager:
 - /new_bill is handled deterministically (no tool needed)
 - Photo OCR is automated when no OCR exists (no tool needed)
-- State save/load operations are automated (no tools needed)
+- Status updates automated (send_processing_status removed)
+- Description storage mostly automated (save_participant_description for edge cases)
 
-Reduced from 22 tools to 12 tools for efficiency.
+Reduced from 22 tools to 11 tools for efficiency.
 """
 
 from typing import Any
 
 # Tool definitions for Anthropic Claude function calling API
 TOOLS: list[dict[str, Any]] = [
-    # ===== USER INTERACTION TOOLS (6) =====
+    # ===== USER INTERACTION TOOLS (5) =====
     {
         "name": "send_message",
         "description": "Send message to user (Markdown supported). Use for final summary or general communication.",
@@ -31,15 +32,6 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {"question": {"type": "string", "description": "Question"}},
             "required": ["question"],
-        },
-    },
-    {
-        "name": "send_processing_status",
-        "description": "Send status update during long operations (e.g., 'Processing receipt...')",
-        "input_schema": {
-            "type": "object",
-            "properties": {"status": {"type": "string", "description": "Status message"}},
-            "required": ["status"],
         },
     },
     {
@@ -119,6 +111,18 @@ TOOLS: list[dict[str, Any]] = [
                 "tolerance": {"type": "number", "description": "Max acceptable discrepancy (default: 0.02)"},
             },
             "required": ["bill_split_json"],
+        },
+    },
+    # ===== STATE MANAGEMENT (1) =====
+    {
+        "name": "save_participant_description",
+        "description": "Store participant description (who ate what) in session state. Use when user provides or corrects their description in a non-standard way.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string", "description": "User's description of who ate what"},
+            },
+            "required": ["description"],
         },
     },
 ]

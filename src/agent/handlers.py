@@ -60,7 +60,10 @@ async def handle_text_message(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     """
-    Handle text messages - pass to agent for processing.
+    Handle text messages with hybrid workflow.
+
+    If awaiting participant description: Handled deterministically (store, try split)
+    Otherwise: Delegate to agent for interpretation
 
     Args:
         update: Telegram update object
@@ -86,6 +89,21 @@ async def handle_text_message(
         # Truncate message for span attribute
         span.set_attribute("telegram.message_preview", text[:100])
 
+        # Check if workflow can handle deterministically
+        use_agent, agent_message = await workflow_manager.should_handle_text_with_agent(
+            chat_id, text, context
+        )
+
+        if not use_agent:
+            # Workflow handled it completely
+            logger.info(f"Text for chat {chat_id} handled deterministically")
+            span.set_attribute("handler.delegated_to_agent", False)
+            return
+
+        # Need agent for interpretation
+        logger.info(f"Text for chat {chat_id} delegated to agent")
+        span.set_attribute("handler.delegated_to_agent", True)
+
         # Build agent context
         agent_context = AgentContext(
             chat_id=chat_id,
@@ -93,8 +111,8 @@ async def handle_text_message(
             context=context,
         )
 
-        # Run agent with new text
-        await orchestrator.run(agent_context=agent_context, new_message=text)
+        # Run agent with text message
+        await orchestrator.run(agent_context=agent_context, new_message=agent_message)
 
 
 async def handle_photo_message(

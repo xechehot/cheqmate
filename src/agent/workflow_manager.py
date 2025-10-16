@@ -21,6 +21,73 @@ tracer = get_tracer("cheqmate.workflow")
 class WorkflowManager:
     """Manages deterministic workflow steps before delegating to agent."""
 
+    async def _try_create_initial_split_if_ready(
+        self, chat_id: int, context: ContextTypes.DEFAULT_TYPE
+    ) -> bool:
+        """
+        Try to create initial bill split if both receipt data and description are ready.
+
+        This is called after either:
+        1. Receipt OCR completes (check if description exists)
+        2. Participant description is provided (check if OCR exists)
+
+        Args:
+            chat_id: Telegram chat ID
+            context: Telegram context
+
+        Returns:
+            True if split was created successfully, False if missing data or error
+        """
+        # Import here to avoid circular dependency
+        from src.bot.conversation_manager import conversation_manager
+        from src.tools.llm_processing import create_initial_bill_split
+        from src.tools.user_interaction import send_formatted_split
+
+        session = conversation_manager.get_session(chat_id)
+
+        # Check if we have both pieces needed
+        if not session.has_receipt_data():
+            logger.debug(
+                f"Chat {chat_id}: Cannot create split yet - missing receipt data"
+            )
+            return False
+
+        if not session.participant_description:
+            logger.debug(
+                f"Chat {chat_id}: Cannot create split yet - missing participant description"
+            )
+            return False
+
+        # Both pieces available - create split deterministically
+        logger.info(
+            f"Chat {chat_id}: Both receipt data and description available - creating initial split"
+        )
+
+        try:
+            # Create initial bill split using LLM
+            bill_split = await create_initial_bill_split(
+                chat_id, session.participant_description
+            )
+
+            # Store in session
+            session.store_bill_split(bill_split)
+
+            # Send formatted split to user
+            await send_formatted_split(
+                chat_id, bill_split, context, title="Initial Bill Split"
+            )
+
+            logger.info(
+                f"Chat {chat_id}: Successfully created and sent initial bill split deterministically"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"Chat {chat_id}: Error creating initial split: {e}", exc_info=True
+            )
+            return False
+
     async def handle_new_bill_command(
         self, chat_id: int, context: ContextTypes.DEFAULT_TYPE
     ) -> bool:
@@ -153,9 +220,20 @@ class WorkflowManager:
                 span.set_attribute("workflow.ocr_total", float(receipt_data.total))
                 span.set_attribute("workflow.ocr_currency", receipt_data.currency)
 
-                logger.info(
-                    f"Workflow completed photo processing for chat {chat_id} - no agent needed"
+                # 6. Try to create initial split if participant description exists
+                split_created = await self._try_create_initial_split_if_ready(
+                    chat_id, context
                 )
+                if split_created:
+                    span.set_attribute("workflow.split_auto_created", True)
+                    logger.info(
+                        f"Workflow completed photo processing + split creation for chat {chat_id} - no agent needed"
+                    )
+                else:
+                    logger.info(
+                        f"Workflow completed photo processing for chat {chat_id} - waiting for participant description"
+                    )
+
                 return True, None
 
             except Exception as e:
@@ -172,20 +250,23 @@ class WorkflowManager:
                 )
 
     async def should_handle_text_with_agent(
-        self, chat_id: int, text: str
+        self, chat_id: int, text: str, context: ContextTypes.DEFAULT_TYPE
     ) -> tuple[bool, str]:
         """
         Determine if text message should be handled by agent.
 
-        Text messages are always handled by agent for flexibility:
-        - Could be participant description
-        - Could be clarification/answer
-        - Could be question/instruction
-        - Could be correction
+        Deterministic handling:
+        - If awaiting participant description: Store and try to create split
+
+        Otherwise delegate to agent for:
+        - Clarification/answer
+        - Question/instruction
+        - Correction
 
         Args:
             chat_id: Telegram chat ID
             text: User's text message
+            context: Telegram context
 
         Returns:
             Tuple of (use_agent, message_for_agent)
@@ -194,6 +275,49 @@ class WorkflowManager:
             "workflow_text", openinference_span_kind="chain"
         ) as span:
             span.set_attribute("workflow.action", "text_message")
+
+            # Import here to avoid circular dependency
+            from src.bot.conversation_manager import conversation_manager
+            from src.models.conversation_state import ConversationStep
+
+            session = conversation_manager.get_session(chat_id)
+
+            # Check if we're awaiting participant description
+            if session.step == ConversationStep.AWAITING_DESCRIPTION:
+                logger.info(
+                    f"Chat {chat_id}: Text received while awaiting description - storing and trying to create split"
+                )
+                span.set_attribute("workflow.deterministic", True)
+                span.set_attribute("workflow.reason", "storing_participant_description")
+
+                # Store the participant description
+                session.set_description(text)
+                logger.debug(f"Chat {chat_id}: Stored participant description")
+
+                # Try to create split if receipt data exists
+                split_created = await self._try_create_initial_split_if_ready(
+                    chat_id, context
+                )
+
+                if split_created:
+                    span.set_attribute("workflow.split_auto_created", True)
+                    logger.info(
+                        f"Chat {chat_id}: Participant description stored + split created - no agent needed"
+                    )
+                    # No agent needed, split was created
+                    return False, ""
+                else:
+                    # Split not created yet, but description stored
+                    # Send message asking for receipt
+                    from src.tools.user_interaction import request_receipt_photo
+
+                    await request_receipt_photo(chat_id, context)
+                    logger.info(
+                        f"Chat {chat_id}: Participant description stored - waiting for receipt"
+                    )
+                    return False, ""
+
+            # Not awaiting description - delegate to agent for interpretation
             span.set_attribute("workflow.deterministic", False)
             span.set_attribute("workflow.reason", "text_needs_interpretation")
 
@@ -201,7 +325,6 @@ class WorkflowManager:
                 f"Text message for chat {chat_id} will be handled by agent (requires interpretation)"
             )
 
-            # Always delegate text to agent
             return True, text
 
 

@@ -229,7 +229,6 @@ class TestOrchestratorImageHandling:
             # Iteration 1: Create split (OCR already done by workflow_manager)
             create_tool_use_message(
                 [
-                    ("send_processing_status", {"status": "Creating bill split..."}),
                     (
                         "create_initial_bill_split",
                         {

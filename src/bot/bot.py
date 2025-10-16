@@ -81,6 +81,7 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("new_bill", new_bill_command))
+    application.add_handler(CommandHandler("new", new_bill_command))
 
     # Register message handlers (order matters - more specific first)
     application.add_handler(MessageHandler(filters.PHOTO, photo_message_handler))
@@ -102,4 +103,4 @@ def run_bot() -> None:
 
     # Run the bot using run_polling (this blocks until stopped)
     logger.info("Bot is now running. Press Ctrl+C to stop.")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling()

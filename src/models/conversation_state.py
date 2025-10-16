@@ -30,16 +30,16 @@ class BillSession:
     def start_new_bill(self) -> None:
         """Start a new bill splitting workflow."""
         self.reset()
-        self.step = ConversationStep.AWAITING_DESCRIPTION
-
-    def set_description(self, description: str) -> None:
-        """Store participant description and move to next step."""
-        self.participant_description = description
         self.step = ConversationStep.AWAITING_RECEIPT
 
     def set_receipt(self, file_id: str) -> None:
-        """Store receipt file ID and move to processing."""
+        """Store receipt file ID and move to next step."""
         self.receipt_file_id = file_id
+        self.step = ConversationStep.AWAITING_DESCRIPTION
+
+    def set_description(self, description: str) -> None:
+        """Store participant description and move to processing."""
+        self.participant_description = description
         self.step = ConversationStep.PROCESSING
 
     def is_ready_for_processing(self) -> bool:

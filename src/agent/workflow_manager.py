@@ -64,10 +64,8 @@ class WorkflowManager:
         )
 
         try:
-            # Create initial bill split using LLM
-            bill_split = await create_initial_bill_split(
-                chat_id, session.participant_description
-            )
+            # Create initial bill split using LLM (auto-fetches description from session)
+            bill_split = await create_initial_bill_split(chat_id)
 
             # Store in session
             session.store_bill_split(bill_split)

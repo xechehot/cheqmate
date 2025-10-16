@@ -798,6 +798,29 @@ class AgentOrchestrator:
         else:
             result = tool_func(**kwargs)
 
+        # Store results in session for state tracking
+        session = tool_context["session"]
+
+        # Import types for result checking
+        from src.tools.split_quality import SplitQualityMetrics
+
+        if tool_name == "evaluate_split_quality" and isinstance(result, SplitQualityMetrics):
+            # Store quality metrics in session
+            session.store_split_quality_metrics(result)
+            logger.debug(f"Stored quality metrics in session for chat {chat_id}")
+
+        elif tool_name == "refine_split_with_llm" and isinstance(result, tuple):
+            # refine_split_with_llm returns (BillSplit, str)
+            refined_split, explanation = result
+            session.store_bill_split(refined_split)
+            session.increment_refinement_count()
+            logger.debug(f"Stored refined split and incremented refinement count for chat {chat_id}")
+
+        elif tool_name == "create_initial_bill_split" and isinstance(result, BillSplit):
+            # Store initial split in session
+            session.store_bill_split(result)
+            logger.debug(f"Stored initial bill split in session for chat {chat_id}")
+
         # Format result for Claude
         if result is None:
             return "Success (no return value)"

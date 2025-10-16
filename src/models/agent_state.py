@@ -5,9 +5,13 @@ including caching of intermediate results to avoid redundant expensive operation
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from src.models.bill import BillSplit, ReceiptData
 from src.models.conversation_state import BillSession
+
+if TYPE_CHECKING:
+    from src.tools.split_quality import SplitQualityMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +29,10 @@ class AgentBillSession(BillSession):
         self.bill_split: BillSplit | None = None
         self.image_bytes: bytes | None = None  # Cache downloaded receipt image
 
+        # Split quality and refinement tracking
+        self.split_quality_metrics: "SplitQualityMetrics | None" = None
+        self.split_refinement_count: int = 0
+
         # Agent execution tracking (for debugging/observability)
         self.agent_turns: int = 0
         self.last_error: str | None = None
@@ -35,6 +43,8 @@ class AgentBillSession(BillSession):
         self.receipt_data = None
         self.bill_split = None
         self.image_bytes = None
+        self.split_quality_metrics = None
+        self.split_refinement_count = 0
         self.agent_turns = 0
         self.last_error = None
         logger.debug("Agent session reset")
@@ -101,3 +111,37 @@ class AgentBillSession(BillSession):
     def has_image_bytes(self) -> bool:
         """Check if image bytes are cached in session."""
         return self.image_bytes is not None
+
+    def store_split_quality_metrics(
+        self, metrics: "SplitQualityMetrics"
+    ) -> None:
+        """
+        Store split quality metrics in session for reuse.
+
+        Args:
+            metrics: Quality metrics from evaluate_split_quality
+        """
+        self.split_quality_metrics = metrics
+        logger.info(
+            f"Stored split quality metrics: "
+            f"discrepancy={metrics.total_discrepancy}, "
+            f"unassigned={metrics.unassigned_count}, "
+            f"is_complete={metrics.is_complete}"
+        )
+
+    def has_split_quality_metrics(self) -> bool:
+        """Check if split quality metrics have been calculated."""
+        return self.split_quality_metrics is not None
+
+    def increment_refinement_count(self) -> None:
+        """
+        Increment split refinement counter.
+
+        This should be called each time refine_split_with_llm is successfully executed.
+        """
+        self.split_refinement_count += 1
+        logger.info(f"Split refinement count incremented to {self.split_refinement_count}")
+
+    def has_refined_split(self) -> bool:
+        """Check if split has been refined at least once."""
+        return self.split_refinement_count > 0

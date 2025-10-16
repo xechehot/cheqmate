@@ -81,34 +81,35 @@ async def extract_receipt_ocr(
         return receipt_data
 
 
-async def create_initial_bill_split(chat_id: int, description: str) -> BillSplit:
+async def create_initial_bill_split(chat_id: int) -> BillSplit:
     """
     Create initial bill split by assigning items to participants.
 
-    This is a TEXT-ONLY operation. The receipt_data is automatically retrieved
-    from the session (where it was stored by the workflow manager's OCR process).
+    This is a TEXT-ONLY operation. Both receipt_data and participant_description
+    are automatically retrieved from the session (where they were stored by the
+    workflow manager's OCR process and description storage).
 
     This is a wrapper around AnthropicService.split_bill.
 
     Args:
         chat_id: Telegram chat ID (for session retrieval)
-        description: User's description of who ate what
 
     Returns:
         BillSplit object with participant assignments
 
     Raises:
-        ValueError: If split creation fails or no receipt data available in session
+        ValueError: If split creation fails or no receipt data/description available in session
     """
     with tracer.start_as_current_span(
         "create_initial_bill_split", openinference_span_kind="tool"
     ) as span:
         span.set_attribute("llm.operation", "bill_split_creation")
         span.set_attribute("llm.chat_id", str(chat_id))
-        span.set_attribute("llm.description_length", len(description))
+
+        # Auto-retrieve session
+        session = conversation_manager.get_session(chat_id)
 
         # Auto-retrieve receipt_data from session
-        session = conversation_manager.get_session(chat_id)
         if not session.has_receipt_data():
             raise ValueError(
                 "No receipt data available in session. OCR must be completed first."
@@ -116,6 +117,17 @@ async def create_initial_bill_split(chat_id: int, description: str) -> BillSplit
         receipt_data = session.receipt_data
         logger.info("Retrieved cached receipt data from session for bill split")
         span.set_attribute("llm.receipt_source", "session_cache")
+
+        # Auto-retrieve participant_description from session
+        if not session.participant_description:
+            raise ValueError(
+                "No participant description available in session. "
+                "Use save_participant_description first or ensure workflow stored it."
+            )
+        description = session.participant_description
+        logger.info("Retrieved cached participant description from session for bill split")
+        span.set_attribute("llm.description_source", "session_cache")
+        span.set_attribute("llm.description_length", len(description))
 
         span.set_attribute("llm.receipt_items_count", len(receipt_data.items))
         span.set_attribute("llm.receipt_total", float(receipt_data.total))

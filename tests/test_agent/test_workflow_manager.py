@@ -69,14 +69,40 @@ class TestHandleNewBillCommand:
         sample_receipt_data,
         sample_bill_split,
     ):
-        """Test /new_bill clears receipt data, split, and cached image."""
-        # Setup - populate session with data
+        """Test /new_bill clears receipt data, split, cached image, quality metrics, and refinement count."""
+        from src.tools.split_quality import SplitQualityMetrics
+        from decimal import Decimal
+
+        # Setup - populate session with ALL data including quality metrics and refinement count
         session = AgentBillSession()
         session.participant_description = "Alice had burger"
         session.receipt_file_id = "file_123"
         session.receipt_data = sample_receipt_data
         session.bill_split = sample_bill_split
         session.image_bytes = b"fake_image"
+
+        # Add quality metrics
+        quality_metrics = SplitQualityMetrics(
+            participant_totals={"Alice": Decimal("15.00")},
+            participants_sum=Decimal("15.00"),
+            participant_count=1,
+            receipt_total=Decimal("15.00"),
+            total_discrepancy=Decimal("0.00"),
+            unassigned_items=[],
+            unassigned_count=0,
+            passes_accuracy_threshold=True,
+            is_complete=True,
+        )
+        session.store_split_quality_metrics(quality_metrics)
+
+        # Add refinement count
+        session.increment_refinement_count()
+        session.increment_refinement_count()
+
+        # Verify everything is set before reset
+        assert session.split_quality_metrics is not None
+        assert session.split_refinement_count == 2
+
         mock_conv_manager.get_session.return_value = session
         mock_request_desc.return_value = None
 
@@ -84,12 +110,16 @@ class TestHandleNewBillCommand:
         workflow = WorkflowManager()
         await workflow.handle_new_bill_command(12345, mock_telegram_context)
 
-        # Assert - all state cleared
+        # Assert - all state cleared including new fields
         assert session.participant_description is None
         assert session.receipt_file_id is None
         assert session.receipt_data is None
         assert session.bill_split is None
         assert session.image_bytes is None
+        assert session.split_quality_metrics is None
+        assert session.split_refinement_count == 0
+        assert session.has_split_quality_metrics() is False
+        assert session.has_refined_split() is False
 
 
 class TestHandlePhotoMessage:
@@ -145,6 +175,12 @@ class TestHandlePhotoMessage:
         mock_send_receipt.assert_called_once_with(
             12345, mock_telegram_context
         )
+
+        # Verify state tracking - OCR done, but no split yet, so no quality metrics
+        assert session.has_receipt_data() is True
+        assert session.has_bill_split() is False
+        assert session.has_split_quality_metrics() is False
+        assert session.has_refined_split() is False
 
     @pytest.mark.asyncio
     @patch("src.bot.conversation_manager.conversation_manager")
@@ -305,14 +341,18 @@ class TestHandlePhotoMessage:
         assert session.receipt_data == sample_receipt_data
         mock_send_receipt.assert_called_once_with(12345, mock_telegram_context)
 
-        # Verify split creation
-        mock_create_split.assert_called_once_with(
-            12345, "Alice had burger, Bob had salad"
-        )
+        # Verify split creation (auto-fetches description from session)
+        mock_create_split.assert_called_once_with(12345)
         mock_send_split.assert_called_once_with(
             12345, sample_bill_split, mock_telegram_context, title="Initial Bill Split"
         )
         assert session.bill_split == sample_bill_split
+
+        # Verify state tracking - initial split has no quality metrics or refinements yet
+        assert session.has_bill_split() is True
+        assert session.has_split_quality_metrics() is False
+        assert session.has_refined_split() is False
+        assert session.split_refinement_count == 0
 
 
 class TestShouldHandleTextWithAgent:
@@ -411,14 +451,20 @@ class TestShouldHandleTextWithAgent:
             context=mock_telegram_context,
         )
 
-        # Assert - handled deterministically, split created
+        # Assert - handled deterministically, split created (auto-fetches description from session)
         assert use_agent is False
         assert session.participant_description == text
-        mock_create_split.assert_called_once_with(12345, text)
+        mock_create_split.assert_called_once_with(12345)
         mock_send_split.assert_called_once_with(
             12345, sample_bill_split, mock_telegram_context, title="Initial Bill Split"
         )
         assert session.bill_split == sample_bill_split
+
+        # Verify state tracking - initial split with no quality evaluation or refinements yet
+        assert session.has_bill_split() is True
+        assert session.has_split_quality_metrics() is False
+        assert session.has_refined_split() is False
+        assert session.split_refinement_count == 0
 
 
 class TestWorkflowManagerInstance:

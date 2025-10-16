@@ -89,10 +89,12 @@ class TestCreateInitialBillSplit:
         """Test successful bill split creation."""
         from unittest.mock import AsyncMock
 
-        # Mock the session to return receipt_data
+        # Mock the session to return receipt_data and participant_description
         from src.models.agent_state import AgentBillSession
         mock_session = AgentBillSession()
         mock_session.receipt_data = sample_receipt_data
+        description = "Alice had burger and half the fries, Bob had salad and half the fries"
+        mock_session.participant_description = description
         mock_conversation_manager.get_session.return_value = mock_session
 
         # Mock the service
@@ -123,12 +125,8 @@ class TestCreateInitialBillSplit:
         )
         mock_service.split_bill = AsyncMock(return_value=expected_split)
 
-        # Execute (TEXT-ONLY - no image needed)
-        description = "Alice had burger and half the fries, Bob had salad and half the fries"
-        result = await create_initial_bill_split(
-            chat_id=12345,
-            description=description,
-        )
+        # Execute (TEXT-ONLY - no image needed, auto-fetches description from session)
+        result = await create_initial_bill_split(chat_id=12345)
 
         # Verify
         assert len(result.participants) == 2
@@ -147,10 +145,11 @@ class TestCreateInitialBillSplit:
     @patch("src.tools.llm_processing.AnthropicService")
     async def test_create_split_parsing_error(self, mock_service_class, mock_conversation_manager, sample_receipt_data):
         """Test split creation with parsing error."""
-        # Mock the session to return receipt_data
+        # Mock the session to return receipt_data and participant_description
         from src.models.agent_state import AgentBillSession
         mock_session = AgentBillSession()
         mock_session.receipt_data = sample_receipt_data
+        mock_session.participant_description = "Alice had burger"
         mock_conversation_manager.get_session.return_value = mock_session
 
         mock_service = Mock()
@@ -160,10 +159,7 @@ class TestCreateInitialBillSplit:
         )
 
         with pytest.raises(ValueError, match="Failed to parse split response"):
-            await create_initial_bill_split(
-                chat_id=12345,
-                description="Alice had burger",
-            )
+            await create_initial_bill_split(chat_id=12345)
 
 
 class TestRefineSplitWithLLM:
@@ -336,15 +332,13 @@ class TestIntegration:
         # Verify OCR result
         assert receipt_data == sample_receipt_data
 
-        # Store receipt_data in session (simulating what would happen in real workflow)
+        # Store receipt_data and participant_description in session (simulating what would happen in real workflow)
         mock_session.receipt_data = receipt_data
-
-        # Execute split (TEXT-ONLY - no image needed)
         description = "Alice and Bob split the bill"
-        bill_split = await create_initial_bill_split(
-            chat_id=12345,
-            description=description,
-        )
+        mock_session.participant_description = description
+
+        # Execute split (TEXT-ONLY - no image needed, auto-fetches description from session)
+        bill_split = await create_initial_bill_split(chat_id=12345)
 
         # Verify split result
         assert bill_split == sample_bill_split

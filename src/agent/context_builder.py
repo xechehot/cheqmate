@@ -65,6 +65,16 @@ class AgentContext:
         """Check if image bytes are cached."""
         return self.session.has_image_bytes()
 
+    @property
+    def has_split_quality(self) -> bool:
+        """Check if split quality metrics have been calculated."""
+        return self.session.has_split_quality_metrics()
+
+    @property
+    def has_refined_split(self) -> bool:
+        """Check if split has been refined at least once."""
+        return self.session.has_refined_split()
+
     def get_state_summary(self) -> str:
         """
         Generate human-readable state summary for agent prompt.
@@ -75,24 +85,44 @@ class AgentContext:
         lines = ["**State:**"]
 
         # Participant description
-        lines.append(f"Description: {'✓' if self.has_participant_description else '✗'}")
+        lines.append(f"Description: {'[+]' if self.has_participant_description else '[-]'}")
 
         # Receipt photo
-        lines.append(f"Photo: {'✓' if self.has_receipt_file_id else '✗'}")
+        lines.append(f"Photo: {'[+]' if self.has_receipt_file_id else '[-]'}")
 
         # OCR results
         if self.has_receipt_data:
             receipt = self.session.receipt_data
-            lines.append(f"OCR: ✓ ({len(receipt.items)} items, {receipt.total} {receipt.currency})")
+            lines.append(f"OCR: [+] ({len(receipt.items)} items, {receipt.total} {receipt.currency})")
         else:
-            lines.append("OCR: ✗")
+            lines.append("OCR: [-]")
 
         # Bill split
         if self.has_bill_split:
             split = self.session.bill_split
-            lines.append(f"Split: ✓ ({len(split.participants)} participants)")
+            receipt = self.session.receipt_data
+            # Show participant count and total amount with currency
+            lines.append(f"Split: [+] ({len(split.participants)} participants, {receipt.total} {receipt.currency})")
         else:
-            lines.append("Split: ✗")
+            lines.append("Split: [-]")
+
+        # Split quality
+        if self.has_split_quality:
+            metrics = self.session.split_quality_metrics
+            lines.append(
+                f"Split quality: [+] (discrepancy: {metrics.total_discrepancy}, "
+                f"unassigned: {metrics.unassigned_count})"
+            )
+        else:
+            lines.append("Split quality: [-]")
+
+        # Split refined
+        if self.has_refined_split:
+            count = self.session.split_refinement_count
+            refinement_text = "refinement" if count == 1 else "refinements"
+            lines.append(f"Split refined: [+] ({count} {refinement_text})")
+        else:
+            lines.append("Split refined: [-]")
 
         return "\n".join(lines)
 
@@ -127,6 +157,7 @@ def build_system_prompt() -> str:
 Many tasks are now AUTOMATED before you are invoked:
 - /new_bill → Auto-handled (description already requested)
 - Photo received → Auto-processed (OCR done, receipt sent to user)
+- Draft split created → Auto-created (if description exists)
 - You are invoked ONLY when agent decision-making is needed
 
 **Tools (11 total - reduced from 22):**
@@ -141,7 +172,7 @@ State Management (1): save_participant_description (when description is awaited)
    - receipt_data (from automated OCR)
 
 2. **Create Split**:
-   - Use create_initial_bill_split with description (receipt_data auto-fetched from session)
+   - Use create_initial_bill_split (takes NO parameters - auto-fetches both receipt_data and description from session)
    - Show with send_formatted_split "Draft"
 
 3. **Verify (MANDATORY - ONE CALL)**:

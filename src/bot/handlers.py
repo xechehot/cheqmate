@@ -86,7 +86,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         # Log parsed receipt data
         logger.info(f"Extracted {len(receipt_items)} items from receipt for chat {chat_id}")
         for item in receipt_items:
-            logger.info(f"  - {item.name}: ${item.price:.2f} x{item.quantity} = ${item.total_price:.2f}")
+            logger.info(f"  - {item.description}: ${item.unit_price:.2f} x{item.quantity} = ${item.line_total:.2f}")
 
         # Delete processing message
         await processing_message.delete()
@@ -95,9 +95,9 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         receipt_text_lines = ["✅ **Receipt Recognized!**\n", "**Items Found:**"]
         for item in receipt_items:
             if item.quantity > 1:
-                receipt_text_lines.append(f"• {item.name}: ${item.price:.2f} x{item.quantity} = ${item.total_price:.2f}")
+                receipt_text_lines.append(f"• {item.description}: ${item.unit_price:.2f} x{item.quantity} = ${item.line_total:.2f}")
             else:
-                receipt_text_lines.append(f"• {item.name}: ${item.price:.2f}")
+                receipt_text_lines.append(f"• {item.description}: ${item.line_total:.2f}")
 
         receipt_text_lines.append("\n⏳ Matching items to participants...")
         receipt_text = "\n".join(receipt_text_lines)

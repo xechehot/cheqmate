@@ -1,21 +1,33 @@
 """Data models for bill splitting and receipt processing."""
 
 from decimal import Decimal
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ReceiptItem(BaseModel):
     """Represents a single item from a receipt."""
 
-    name: str = Field(description="Name of the item")
-    price: Decimal = Field(description="Price of the item")
+    description: str = Field(description="Description/name of the item")
     quantity: int = Field(default=1, description="Quantity of the item")
+    line_total: Decimal = Field(description="Total price for this line item (quantity × unit price)")
+    unit_price: Decimal = Field(description="Price per unit (calculated from line_total/quantity if not provided)")
 
-    @property
-    def total_price(self) -> Decimal:
-        """Calculate total price for this item (price * quantity)."""
-        return self.price * self.quantity
+    @model_validator(mode='before')
+    @classmethod
+    def calculate_unit_price(cls, data: Any) -> Any:
+        """Calculate unit_price from line_total if not provided."""
+        if isinstance(data, dict):
+            # Only calculate if unit_price is not provided
+            if 'unit_price' not in data or data['unit_price'] is None:
+                quantity = data.get('quantity', 1)
+                line_total = data.get('line_total')
+                if line_total is not None and quantity > 0:
+                    data['unit_price'] = Decimal(str(line_total)) / quantity
+                else:
+                    data['unit_price'] = Decimal('0')
+        return data
 
 
 class ParticipantShare(BaseModel):
@@ -46,7 +58,10 @@ class BillSplit(BaseModel):
         # Receipt items
         lines.append("**Receipt Items:**")
         for item in self.receipt_items:
-            lines.append(f"• {item.name}: ${item.price:.2f} (x{item.quantity})")
+            if item.quantity > 1:
+                lines.append(f"• {item.description}: ${item.unit_price:.2f} x{item.quantity} = ${item.line_total:.2f}")
+            else:
+                lines.append(f"• {item.description}: ${item.line_total:.2f}")
 
         lines.append("")
 

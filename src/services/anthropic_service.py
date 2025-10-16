@@ -89,23 +89,32 @@ class AnthropicService:
         prompt = """Analyze this receipt image and extract all items with their prices.
 
 First, carefully examine the receipt to identify:
-1. All individual items/dishes with their prices
+1. All individual items/dishes with their descriptions
 2. Quantities (if specified, otherwise default to 1)
-3. Subtotal (sum of all items)
-4. Tax amount
-5. Tip/gratuity (if present, otherwise 0)
-6. Grand total
+3. Line total for each item (the total amount charged for that line - this is ALWAYS shown on receipts)
+4. Unit price for each item (if shown separately on the receipt - this is OPTIONAL)
+5. Subtotal (sum of all line totals)
+6. Tax amount
+7. Tip/gratuity (if present, otherwise 0)
+8. Grand total
+
+IMPORTANT:
+- "line_total" is the total price for that line item (quantity × unit_price) - ALWAYS present on receipt
+- "unit_price" is optional - only include it if explicitly shown on the receipt
+- If unit_price is not shown, omit it (it will be calculated automatically)
 
 Then output ONLY a valid JSON object with this exact structure (no markdown, no explanations):
 {
   "items": [
-    {"name": "item name", "price": 12.50, "quantity": 1}
+    {"description": "item description", "line_total": 25.00, "quantity": 2, "unit_price": 12.50}
   ],
   "subtotal": 50.00,
   "tax": 4.50,
   "tip": 10.00,
   "total": 64.50
-}"""
+}
+
+Note: unit_price is optional in the items array."""
 
         # Call Claude API with vision and response prefilling
         message = self.client.messages.create(
@@ -147,9 +156,10 @@ Then output ONLY a valid JSON object with this exact structure (no markdown, no 
             receipt_data = json.loads(json_text)
             items = [
                 ReceiptItem(
-                    name=item["name"],
-                    price=Decimal(str(item["price"])),
+                    description=item["description"],
+                    line_total=Decimal(str(item["line_total"])),
                     quantity=item.get("quantity", 1),
+                    unit_price=Decimal(str(item["unit_price"])) if "unit_price" in item and item["unit_price"] is not None else None,
                 )
                 for item in receipt_data["items"]
             ]
@@ -181,10 +191,15 @@ Then output ONLY a valid JSON object with this exact structure (no markdown, no 
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
         # Format receipt items for prompt
-        items_text = "\n".join([f"- {item.name}: ${item.price} (x{item.quantity})" for item in receipt_items])
+        items_text = "\n".join([
+            f"- {item.description}: ${item.unit_price:.2f} x{item.quantity} = ${item.line_total:.2f}"
+            if item.quantity > 1
+            else f"- {item.description}: ${item.line_total:.2f}"
+            for item in receipt_items
+        ])
 
         # Calculate totals from receipt items for context
-        subtotal = sum(item.total_price for item in receipt_items)
+        subtotal = sum(item.line_total for item in receipt_items)
 
         # Create structured prompt for bill splitting
         prompt = f"""You are helping split a restaurant bill among friends.

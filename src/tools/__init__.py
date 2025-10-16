@@ -26,8 +26,8 @@ from src.tools.split_quality import SplitQualityMetrics, evaluate_split_quality
 from src.tools.state_management import (
     get_participant_description,
     get_receipt_file_id,
-    save_participant_description,
     save_receipt_file_id,
+    update_participant_description,
 )
 from src.tools.user_interaction import (
     ask_clarification_question,
@@ -59,7 +59,7 @@ __all__ = [
     # State management
     "get_participant_description",
     "get_receipt_file_id",
-    "save_participant_description",
+    "update_participant_description",
     "save_receipt_file_id",
     # LLM processing
     "extract_receipt_ocr",

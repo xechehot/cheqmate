@@ -122,7 +122,7 @@ async def create_initial_bill_split(chat_id: int) -> BillSplit:
         if not session.participant_description:
             raise ValueError(
                 "No participant description available in session. "
-                "Use save_participant_description first or ensure workflow stored it."
+                "Use update_participant_description first or ensure workflow stored it."
             )
         description = session.participant_description
         logger.info("Retrieved cached participant description from session for bill split")
@@ -147,6 +147,93 @@ async def create_initial_bill_split(chat_id: int) -> BillSplit:
             f"Created initial split with {len(bill_split.participants)} participants"
         )
         return bill_split
+
+
+async def merge_participant_descriptions(
+    chat_id: int, existing_description: str, new_description: str
+) -> str:
+    """
+    Intelligently merge new participant description with existing one using LLM.
+
+    This handles:
+    - Corrections: "Actually Alice had pasta, not burger"
+    - Additions: "Bob also had fries"
+    - Clarifications: "Alice's burger was well-done"
+
+    Args:
+        chat_id: Telegram chat ID (for tracing)
+        existing_description: Current description in session
+        new_description: New description from user to merge
+
+    Returns:
+        Merged description text
+
+    Raises:
+        ValueError: If merge operation fails
+    """
+    with tracer.start_as_current_span(
+        "merge_participant_descriptions", openinference_span_kind="tool"
+    ) as span:
+        span.set_attribute("llm.operation", "description_merge")
+        span.set_attribute("llm.chat_id", str(chat_id))
+        span.set_attribute("llm.existing_length", len(existing_description))
+        span.set_attribute("llm.new_length", len(new_description))
+
+        service = AnthropicService()
+
+        prompt = f"""You are merging participant descriptions for a restaurant bill split.
+
+**Existing description:**
+{existing_description}
+
+**New input from user:**
+{new_description}
+
+**Task:**
+Intelligently merge these descriptions. Handle:
+1. **Corrections**: If new input contradicts existing (e.g., "Actually Alice had pasta not burger"), apply the correction
+2. **Additions**: If new input adds new information (e.g., "Bob also had fries"), add it
+3. **Clarifications**: If new input clarifies existing (e.g., "Alice's burger was well-done"), merge details
+
+**Output:**
+Return ONLY the merged description as plain text (no JSON, no markdown, no explanations).
+Keep it concise and natural.
+
+Examples:
+- Existing: "Alice had burger", New: "Bob had salad" → "Alice had burger, Bob had salad"
+- Existing: "Alice had burger", New: "Actually Alice had pasta" → "Alice had pasta"
+- Existing: "Alice and Bob split everything", New: "Alice had burger, Bob had salad" → "Alice had burger, Bob had salad"
+"""
+
+        # Call Claude API for merge (async)
+        message = await service.client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        # Extract merged description
+        if not message.content:
+            logger.error("Empty response from LLM during description merge")
+            span.set_attribute("llm.error", True)
+            span.set_attribute("llm.error_message", "Empty response")
+            raise ValueError("Failed to merge descriptions: Empty response from LLM")
+
+        merged_description = message.content[0].text.strip()
+
+        # Validation
+        if not merged_description:
+            logger.error("LLM returned empty merged description")
+            span.set_attribute("llm.error", True)
+            span.set_attribute("llm.error_message", "Empty merged description")
+            raise ValueError("Failed to merge descriptions: Empty result")
+
+        span.set_attribute("llm.merged_length", len(merged_description))
+        logger.info(
+            f"Successfully merged descriptions: {len(existing_description)} + {len(new_description)} → {len(merged_description)} chars"
+        )
+
+        return merged_description
 
 
 async def refine_split_with_llm(

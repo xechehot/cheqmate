@@ -6,16 +6,16 @@ IMPORTANT: Many tools were removed/automated by the workflow manager:
 - /new_bill is handled deterministically (no tool needed)
 - Photo OCR is automated when no OCR exists (no tool needed)
 - Status updates automated (send_processing_status removed)
-- Description storage mostly automated (save_participant_description for edge cases)
+- Description storage mostly automated (update_participant_description for edge cases)
 
-Reduced from 22 tools to 11 tools for efficiency.
+Reduced from 22 tools to 10 tools for efficiency.
 """
 
 from typing import Any
 
 # Tool definitions for Anthropic Claude function calling API
 TOOLS: list[dict[str, Any]] = [
-    # ===== USER INTERACTION TOOLS (5) =====
+    # ===== USER INTERACTION TOOLS (4) =====
     {
         "name": "send_message",
         "description": "Send message to user (Markdown supported). Use for final summary or general communication.",
@@ -44,15 +44,6 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
-        "name": "send_formatted_receipt",
-        "description": "Send formatted receipt summary. Receipt data is automatically fetched from session (already extracted by workflow manager's OCR). NOTE: Workflow manager already sends this after OCR for standard flow. Use only if re-showing is needed.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-    },
-    {
         "name": "send_formatted_split",
         "description": "Send formatted split summary. Use after create_initial_bill_split and refine_split_with_llm. Receipt data is automatically fetched from session for currency/total display.",
         "input_schema": {
@@ -68,7 +59,7 @@ TOOLS: list[dict[str, Any]] = [
     # NOTE: extract_receipt_ocr removed - now automated by workflow manager
     {
         "name": "create_initial_bill_split",
-        "description": "Create bill split from participant description. Both receipt data and participant description are automatically fetched from session (stored by workflow manager).",
+        "description": "Create bill split from participant description. Both receipt data and participant description are automatically fetched from session (stored by workflow manager). NOTE: Workflow automatically calls this when ready. Use only if: (1) user explicitly requests recreation, (2) automatic creation failed.",
         "input_schema": {
             "type": "object",
             "properties": {},
@@ -113,12 +104,12 @@ TOOLS: list[dict[str, Any]] = [
     },
     # ===== STATE MANAGEMENT (1) =====
     {
-        "name": "save_participant_description",
-        "description": "Store participant description (who ate what) in session state. Use when user provides or corrects their description in a non-standard way.",
+        "name": "update_participant_description",
+        "description": "Update participant description (who ate what). Intelligently merges with existing description if one exists (handles corrections, additions, clarifications). Use when user provides or corrects their description in a non-standard way.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "description": {"type": "string", "description": "User's description of who ate what"},
+                "description": {"type": "string", "description": "User's new/updated description of who ate what"},
             },
             "required": ["description"],
         },

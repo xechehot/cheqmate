@@ -9,6 +9,7 @@ These tools provide granular access to session state, allowing the agent to:
 import logging
 
 from src.bot.conversation_manager import conversation_manager
+from src.tools.llm_processing import merge_participant_descriptions
 
 logger = logging.getLogger(__name__)
 
@@ -51,17 +52,41 @@ def get_receipt_file_id(chat_id: int) -> str | None:
     return file_id
 
 
-def save_participant_description(chat_id: int, description: str) -> None:
+async def update_participant_description(chat_id: int, description: str) -> None:
     """
-    Store the participant description in the session.
+    Update participant description, intelligently merging with existing if present.
+
+    This tool encapsulates the merge logic:
+    - If no existing description: Sets the description directly
+    - If existing description exists: Uses LLM to intelligently merge
+      (handles corrections, additions, clarifications)
 
     Args:
         chat_id: Telegram chat ID
-        description: User's description of who ate what
+        description: User's new/updated description of who ate what
+
+    Raises:
+        ValueError: If merge operation fails (when existing description exists)
     """
     session = conversation_manager.get_session(chat_id)
-    session.set_description(description)
-    logger.info(f"Saved participant description for chat {chat_id}")
+    existing = session.participant_description
+
+    if existing:
+        # Merge intelligently with LLM
+        logger.info(
+            f"Chat {chat_id}: Merging new description with existing "
+            f"({len(existing)} chars + {len(description)} chars)"
+        )
+        merged = await merge_participant_descriptions(chat_id, existing, description)
+        session.set_description(merged)
+        logger.info(
+            f"Chat {chat_id}: Successfully merged participant description "
+            f"(result: {len(merged)} chars)"
+        )
+    else:
+        # First time - just set
+        session.set_description(description)
+        logger.info(f"Chat {chat_id}: Set initial participant description")
 
 
 def save_receipt_file_id(chat_id: int, file_id: str) -> None:

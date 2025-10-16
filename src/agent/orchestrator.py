@@ -658,7 +658,6 @@ class AgentOrchestrator:
             # User interaction
             ask_clarification_question,
             send_error_message,
-            send_formatted_receipt,
             send_formatted_split,
             send_message,
             # LLM processing
@@ -668,16 +667,15 @@ class AgentOrchestrator:
             # Split quality evaluation
             evaluate_split_quality,
             # State management
-            save_participant_description,
+            update_participant_description,
         )
 
-        # Tool dispatch map (reduced from 22 to 11 tools)
+        # Tool dispatch map (reduced from 22 to 10 tools)
         TOOL_MAP = {
-            # User interaction (5)
+            # User interaction (4)
             "send_message": send_message,
             "ask_clarification_question": ask_clarification_question,
             "send_error_message": send_error_message,
-            "send_formatted_receipt": send_formatted_receipt,
             "send_formatted_split": send_formatted_split,
             # LLM processing (3)
             "create_initial_bill_split": create_initial_bill_split,
@@ -686,7 +684,7 @@ class AgentOrchestrator:
             # Split quality evaluation (1 - replaces 4 calculation tools)
             "evaluate_split_quality": evaluate_split_quality,
             # State management (1)
-            "save_participant_description": save_participant_description,
+            "update_participant_description": update_participant_description,
         }
 
         tool_func = TOOL_MAP.get(tool_name)

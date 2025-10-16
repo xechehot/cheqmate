@@ -1,8 +1,9 @@
 """Unit tests for LLM processing tools.
 
-These tests cover the 3 LLM-powered tools WITH MOCKED Anthropic API (NO direct LLM calls):
+These tests cover the 4 LLM-powered tools WITH MOCKED Anthropic API (NO direct LLM calls):
 - extract_receipt_ocr
 - create_initial_bill_split
+- merge_participant_descriptions
 - refine_split_with_llm
 """
 
@@ -15,6 +16,7 @@ from src.models.bill import BillSplit, ParticipantItem, ParticipantShare, Receip
 from src.tools.llm_processing import (
     create_initial_bill_split,
     extract_receipt_ocr,
+    merge_participant_descriptions,
     refine_split_with_llm,
 )
 
@@ -160,6 +162,175 @@ class TestCreateInitialBillSplit:
 
         with pytest.raises(ValueError, match="Failed to parse split response"):
             await create_initial_bill_split(chat_id=12345)
+
+
+class TestMergeParticipantDescriptions:
+    """Tests for merge_participant_descriptions with mocked Anthropic API."""
+
+    @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.AnthropicService")
+    async def test_merge_addition(self, mock_service_class):
+        """Test merging with addition (new participant)."""
+        from unittest.mock import AsyncMock
+
+        # Mock the service
+        mock_service = Mock()
+        mock_service_class.return_value = mock_service
+
+        # Mock LLM response - addition scenario
+        mock_response = Mock()
+        mock_response.content = [Mock(text="Alice had burger, Bob had salad")]
+        mock_client = Mock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_service.client = mock_client
+
+        # Execute
+        result = await merge_participant_descriptions(
+            chat_id=12345,
+            existing_description="Alice had burger",
+            new_description="Bob had salad",
+        )
+
+        # Verify
+        assert result == "Alice had burger, Bob had salad"
+        mock_client.messages.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.AnthropicService")
+    async def test_merge_correction(self, mock_service_class):
+        """Test merging with correction."""
+        from unittest.mock import AsyncMock
+
+        # Mock the service
+        mock_service = Mock()
+        mock_service_class.return_value = mock_service
+
+        # Mock LLM response - correction scenario
+        mock_response = Mock()
+        mock_response.content = [Mock(text="Alice had pasta")]
+        mock_client = Mock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_service.client = mock_client
+
+        # Execute
+        result = await merge_participant_descriptions(
+            chat_id=12345,
+            existing_description="Alice had burger",
+            new_description="Actually Alice had pasta",
+        )
+
+        # Verify
+        assert result == "Alice had pasta"
+        mock_client.messages.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.AnthropicService")
+    async def test_merge_clarification(self, mock_service_class):
+        """Test merging with clarification."""
+        from unittest.mock import AsyncMock
+
+        # Mock the service
+        mock_service = Mock()
+        mock_service_class.return_value = mock_service
+
+        # Mock LLM response - clarification scenario
+        mock_response = Mock()
+        mock_response.content = [
+            Mock(text="Alice had burger (well-done), Bob had salad")
+        ]
+        mock_client = Mock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_service.client = mock_client
+
+        # Execute
+        result = await merge_participant_descriptions(
+            chat_id=12345,
+            existing_description="Alice had burger, Bob had salad",
+            new_description="Alice's burger was well-done",
+        )
+
+        # Verify
+        assert result == "Alice had burger (well-done), Bob had salad"
+        mock_client.messages.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.AnthropicService")
+    async def test_merge_llm_failure(self, mock_service_class):
+        """Test merge when LLM returns empty response."""
+        from unittest.mock import AsyncMock
+
+        # Mock the service
+        mock_service = Mock()
+        mock_service_class.return_value = mock_service
+
+        # Mock empty LLM response
+        mock_response = Mock()
+        mock_response.content = []
+        mock_client = Mock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_service.client = mock_client
+
+        # Execute and verify exception
+        with pytest.raises(
+            ValueError, match="Failed to merge descriptions: Empty response from LLM"
+        ):
+            await merge_participant_descriptions(
+                chat_id=12345,
+                existing_description="Alice had burger",
+                new_description="Bob had salad",
+            )
+
+    @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.AnthropicService")
+    async def test_merge_empty_result(self, mock_service_class):
+        """Test merge when LLM returns empty string."""
+        from unittest.mock import AsyncMock
+
+        # Mock the service
+        mock_service = Mock()
+        mock_service_class.return_value = mock_service
+
+        # Mock LLM response with empty text
+        mock_response = Mock()
+        mock_response.content = [Mock(text="   ")]  # Only whitespace
+        mock_client = Mock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        mock_service.client = mock_client
+
+        # Execute and verify exception
+        with pytest.raises(
+            ValueError, match="Failed to merge descriptions: Empty result"
+        ):
+            await merge_participant_descriptions(
+                chat_id=12345,
+                existing_description="Alice had burger",
+                new_description="Bob had salad",
+            )
+
+    @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.AnthropicService")
+    async def test_merge_api_exception(self, mock_service_class):
+        """Test merge when API raises exception."""
+        from unittest.mock import AsyncMock
+
+        # Mock the service
+        mock_service = Mock()
+        mock_service_class.return_value = mock_service
+
+        # Mock API exception
+        mock_client = Mock()
+        mock_client.messages.create = AsyncMock(
+            side_effect=Exception("API connection error")
+        )
+        mock_service.client = mock_client
+
+        # Execute and verify exception propagates
+        with pytest.raises(Exception, match="API connection error"):
+            await merge_participant_descriptions(
+                chat_id=12345,
+                existing_description="Alice had burger",
+                new_description="Bob had salad",
+            )
 
 
 class TestRefineSplitWithLLM:

@@ -53,26 +53,23 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "send_formatted_receipt",
-        "description": "Send formatted receipt summary. NOTE: Workflow manager already sends this after OCR for standard flow. Use only if re-showing is needed.",
+        "description": "Send formatted receipt summary. Receipt data is automatically fetched from session (already extracted by workflow manager's OCR). NOTE: Workflow manager already sends this after OCR for standard flow. Use only if re-showing is needed.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "receipt_data_json": {"type": "string", "description": "ReceiptData JSON"}
-            },
-            "required": ["receipt_data_json"],
+            "properties": {},
+            "required": [],
         },
     },
     {
         "name": "send_formatted_split",
-        "description": "Send formatted split summary. Use after create_initial_bill_split and refine_split_with_llm. Requires both bill_split_json and receipt_data_json for display.",
+        "description": "Send formatted split summary. Use after create_initial_bill_split and refine_split_with_llm. Receipt data is automatically fetched from session for currency/total display.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "bill_split_json": {"type": "string", "description": "BillSplit JSON"},
-                "receipt_data_json": {"type": "string", "description": "ReceiptData JSON from session (for currency/total display)"},
                 "title": {"type": "string", "description": "Title (default: 'Bill Split - Draft')"},
             },
-            "required": ["bill_split_json", "receipt_data_json"],
+            "required": ["bill_split_json"],
         },
     },
     # ===== LLM PROCESSING TOOLS (3) =====
@@ -90,41 +87,38 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "refine_split_with_llm",
-        "description": "Refine bill split when quality issues are detected. Use after evaluate_split_quality shows problems.",
+        "description": "Refine bill split when quality issues are detected. Use after evaluate_split_quality shows problems. Receipt data is automatically fetched from session.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "bill_split_json": {"type": "string", "description": "Current BillSplit JSON"},
-                "receipt_data_json": {"type": "string", "description": "ReceiptData JSON"},
                 "issue_explanation": {"type": "string", "description": "Detailed explanation of issues found"},
             },
-            "required": ["bill_split_json", "receipt_data_json", "issue_explanation"],
+            "required": ["bill_split_json", "issue_explanation"],
         },
     },
     {
         "name": "evaluate_bill_quality_with_llm",
-        "description": "Use LLM to evaluate split quality qualitatively. Provides overall assessment, confidence, issues, and recommendations. Use after evaluate_split_quality.",
+        "description": "Use LLM to evaluate split quality qualitatively. Provides overall assessment, confidence, issues, and recommendations. Use after evaluate_split_quality. Receipt data is automatically fetched from session.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "bill_split_json": {"type": "string", "description": "BillSplit JSON to evaluate"},
-                "receipt_data_json": {"type": "string", "description": "ReceiptData JSON for comparison"},
             },
-            "required": ["bill_split_json", "receipt_data_json"],
+            "required": ["bill_split_json"],
         },
     },
     # ===== QUALITY EVALUATION (1 CONSOLIDATED TOOL - replaces 4 calculation tools) =====
     {
         "name": "evaluate_split_quality",
-        "description": "Comprehensive quality check (replaces 4 tools). Returns: participant_totals, participants_sum, receipt_total, total_discrepancy, unassigned_items, passes_accuracy_threshold, is_complete. ALWAYS use this before completing split.",
+        "description": "Comprehensive quality check (replaces 4 tools). Returns: participant_totals, participants_sum, receipt_total, total_discrepancy, unassigned_items, passes_accuracy_threshold, is_complete. ALWAYS use this before completing split. Receipt data is automatically fetched from session.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "bill_split_json": {"type": "string", "description": "BillSplit JSON"},
-                "receipt_data_json": {"type": "string", "description": "ReceiptData JSON"},
                 "tolerance": {"type": "number", "description": "Max acceptable discrepancy (default: 0.02)"},
             },
-            "required": ["bill_split_json", "receipt_data_json"],
+            "required": ["bill_split_json"],
         },
     },
 ]

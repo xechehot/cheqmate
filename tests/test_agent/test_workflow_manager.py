@@ -143,7 +143,7 @@ class TestHandlePhotoMessage:
         mock_extract_ocr.assert_called_once_with(12345)
         assert session.receipt_data == sample_receipt_data  # OCR data saved
         mock_send_receipt.assert_called_once_with(
-            12345, sample_receipt_data, mock_telegram_context
+            12345, mock_telegram_context
         )
 
     @pytest.mark.asyncio

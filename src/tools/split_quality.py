@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
+from src.bot.conversation_manager import conversation_manager
 from src.models.bill import BillSplit, ReceiptData, ReceiptItem
 
 logger = logging.getLogger(__name__)
@@ -112,8 +113,8 @@ class SplitQualityMetrics:
 
 
 def evaluate_split_quality(
+    chat_id: int,
     bill_split: BillSplit,
-    receipt_data: ReceiptData,
     tolerance: Decimal = Decimal("0.02"),
 ) -> SplitQualityMetrics:
     """
@@ -125,18 +126,29 @@ def evaluate_split_quality(
     3. check_accuracy_threshold → passes_accuracy_threshold
     4. find_unassigned_items → unassigned_items
 
+    Receipt data is automatically fetched from session.
+
     Args:
+        chat_id: Telegram chat ID (for session retrieval)
         bill_split: Complete bill split with participant assignments
-        receipt_data: Original receipt data for comparison
         tolerance: Maximum acceptable discrepancy (default: 0.02)
 
     Returns:
         SplitQualityMetrics with all quality metrics
 
     Raises:
-        ValueError: If item matching fails during calculation
+        ValueError: If item matching fails during calculation or no receipt data available
     """
     logger.debug("Evaluating split quality")
+
+    # Auto-retrieve receipt_data from session
+    session = conversation_manager.get_session(chat_id)
+    if not session.has_receipt_data():
+        raise ValueError(
+            "No receipt data available in session. OCR must be completed first."
+        )
+    receipt_data = session.receipt_data
+    logger.info("Retrieved cached receipt data from session for quality evaluation")
 
     # 1. Calculate participant totals
     participant_totals: dict[str, Decimal] = {}

@@ -227,9 +227,11 @@ class TestSendFormattedReceipt:
     """Tests for send_formatted_receipt function."""
 
     @pytest.mark.asyncio
-    async def test_send_receipt_success(self, mock_telegram_context):
+    async def test_send_receipt_success(self, mock_telegram_context, mock_conversation_manager):
         """Test sending formatted receipt."""
+        from unittest.mock import patch
         from src.models.bill import ReceiptData
+        from src.models.agent_state import AgentBillSession
 
         receipt_data = ReceiptData.model_validate_json(
             """
@@ -245,26 +247,37 @@ class TestSendFormattedReceipt:
             """
         )
 
-        await send_formatted_receipt(
-            chat_id=12345,
-            receipt_data=receipt_data,
-            context=mock_telegram_context,
-        )
+        # Mock session with receipt_data
+        mock_session = AgentBillSession()
+        mock_session.receipt_data = receipt_data
+        mock_conversation_manager.get_session.return_value = mock_session
+
+        with patch(
+            "src.bot.conversation_manager.conversation_manager",
+            mock_conversation_manager,
+        ):
+            await send_formatted_receipt(
+                chat_id=12345,
+                context=mock_telegram_context,
+            )
 
         mock_telegram_context.bot.send_message.assert_called_once()
         call_args = mock_telegram_context.bot.send_message.call_args
         text = call_args.kwargs["text"]
         assert "Receipt Extracted" in text or "Burger" in text
         assert call_args.kwargs["parse_mode"] == "Markdown"
+        mock_conversation_manager.get_session.assert_called_once_with(12345)
 
 
 class TestSendFormattedSplit:
     """Tests for send_formatted_split function."""
 
     @pytest.mark.asyncio
-    async def test_send_split_success(self, mock_telegram_context):
+    async def test_send_split_success(self, mock_telegram_context, mock_conversation_manager):
         """Test sending formatted bill split."""
+        from unittest.mock import patch
         from src.models.bill import BillSplit, ReceiptData
+        from src.models.agent_state import AgentBillSession
 
         bill_split = BillSplit.model_validate_json(
             """
@@ -304,24 +317,35 @@ class TestSendFormattedSplit:
             """
         )
 
-        await send_formatted_split(
-            chat_id=12345,
-            bill_split=bill_split,
-            receipt_data=receipt_data,
-            context=mock_telegram_context,
-            title="Bill Split - Draft",
-        )
+        # Mock session with receipt_data
+        mock_session = AgentBillSession()
+        mock_session.receipt_data = receipt_data
+        mock_conversation_manager.get_session.return_value = mock_session
+
+        with patch(
+            "src.bot.conversation_manager.conversation_manager",
+            mock_conversation_manager,
+        ):
+            await send_formatted_split(
+                chat_id=12345,
+                bill_split=bill_split,
+                context=mock_telegram_context,
+                title="Bill Split - Draft",
+            )
 
         mock_telegram_context.bot.send_message.assert_called_once()
         call_args = mock_telegram_context.bot.send_message.call_args
         text = call_args.kwargs["text"]
         assert "Bill Split" in text or "Alice" in text or "Bob" in text
         assert call_args.kwargs["parse_mode"] == "Markdown"
+        mock_conversation_manager.get_session.assert_called_once_with(12345)
 
     @pytest.mark.asyncio
-    async def test_send_split_with_default_title(self, mock_telegram_context):
+    async def test_send_split_with_default_title(self, mock_telegram_context, mock_conversation_manager):
         """Test sending formatted split with default title."""
+        from unittest.mock import patch
         from src.models.bill import BillSplit, ReceiptData
+        from src.models.agent_state import AgentBillSession
 
         bill_split = BillSplit.model_validate_json(
             """
@@ -344,17 +368,26 @@ class TestSendFormattedSplit:
             """
         )
 
-        await send_formatted_split(
-            chat_id=12345,
-            bill_split=bill_split,
-            receipt_data=receipt_data,
-            context=mock_telegram_context,
-        )
+        # Mock session with receipt_data
+        mock_session = AgentBillSession()
+        mock_session.receipt_data = receipt_data
+        mock_conversation_manager.get_session.return_value = mock_session
+
+        with patch(
+            "src.bot.conversation_manager.conversation_manager",
+            mock_conversation_manager,
+        ):
+            await send_formatted_split(
+                chat_id=12345,
+                bill_split=bill_split,
+                context=mock_telegram_context,
+            )
 
         mock_telegram_context.bot.send_message.assert_called_once()
         call_args = mock_telegram_context.bot.send_message.call_args
         text = call_args.kwargs["text"]
         assert "Draft" in text or "Bill Split" in text
+        mock_conversation_manager.get_session.assert_called_once_with(12345)
 
 
 class TestDownloadTelegramPhoto:

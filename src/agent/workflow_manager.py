@@ -146,7 +146,7 @@ class WorkflowManager:
                 session.store_receipt_data(receipt_data)
 
                 # 5. Send formatted receipt to user
-                await send_formatted_receipt(chat_id, receipt_data, context)
+                await send_formatted_receipt(chat_id, context)
                 logger.info(f"Sent formatted receipt to chat {chat_id}")
 
                 span.set_attribute("workflow.ocr_items_count", len(receipt_data.items))

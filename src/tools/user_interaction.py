@@ -164,20 +164,33 @@ async def send_error_message(
 
 
 async def send_formatted_receipt(
-    chat_id: int, receipt_data: "ReceiptData", context: ContextTypes.DEFAULT_TYPE
+    chat_id: int, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     """
     Send a formatted receipt summary to the user.
 
     This tool displays the OCR-extracted receipt data in a human-readable format,
-    showing all items, prices, and totals. Use this after extract_receipt_ocr
-    to let the user verify the recognized receipt before proceeding with splitting.
+    showing all items, prices, and totals. Receipt data is automatically fetched
+    from session (already extracted by workflow manager's OCR).
 
     Args:
         chat_id: Telegram chat ID
-        receipt_data: ReceiptData object (deserialized by orchestrator)
         context: Telegram context
+
+    Raises:
+        ValueError: If no receipt data available in session
     """
+    # Auto-retrieve receipt_data from session
+    from src.bot.conversation_manager import conversation_manager
+
+    session = conversation_manager.get_session(chat_id)
+    if not session.has_receipt_data():
+        raise ValueError(
+            "No receipt data available in session. OCR must be completed first."
+        )
+    receipt_data = session.receipt_data
+    logger.info("Retrieved cached receipt data from session for formatted receipt")
+
     try:
         # Format using the model's format_summary method
         formatted_text = receipt_data.format_summary()
@@ -197,7 +210,6 @@ async def send_formatted_receipt(
 async def send_formatted_split(
     chat_id: int,
     bill_split: "BillSplit",
-    receipt_data: "ReceiptData",
     context: ContextTypes.DEFAULT_TYPE,
     title: str = "Bill Split - Draft",
 ) -> None:
@@ -206,15 +218,29 @@ async def send_formatted_split(
 
     This tool displays the bill split with participant assignments and calculated totals.
     Use this to show intermediate results (draft splits) before refinement or verification,
-    allowing the user to see progress and provide feedback.
+    allowing the user to see progress and provide feedback. Receipt data is automatically
+    fetched from session for currency and total display.
 
     Args:
         chat_id: Telegram chat ID
         bill_split: BillSplit object (deserialized by orchestrator)
-        receipt_data: ReceiptData object for currency and total display
         context: Telegram context
         title: Optional title for the split summary (default: "Bill Split - Draft")
+
+    Raises:
+        ValueError: If no receipt data available in session
     """
+    # Auto-retrieve receipt_data from session
+    from src.bot.conversation_manager import conversation_manager
+
+    session = conversation_manager.get_session(chat_id)
+    if not session.has_receipt_data():
+        raise ValueError(
+            "No receipt data available in session. OCR must be completed first."
+        )
+    receipt_data = session.receipt_data
+    logger.info("Retrieved cached receipt data from session for formatted split")
+
     try:
         # Format using the model's format_summary method
         formatted_text = bill_split.format_summary(receipt_data, title=title)

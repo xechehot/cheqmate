@@ -170,13 +170,20 @@ class TestRefineSplitWithLLM:
     """Tests for refine_split_with_llm with mocked Anthropic API."""
 
     @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.conversation_manager")
     @patch("src.services.anthropic_service.AsyncAnthropic")
     async def test_refine_split_success(
-        self, mock_anthropic_class, sample_bill_split, sample_receipt_data
+        self, mock_anthropic_class, mock_conversation_manager, sample_bill_split, sample_receipt_data
     ):
         """Test successful split refinement."""
         # Mock AsyncAnthropic client
         from unittest.mock import AsyncMock
+        from src.models.agent_state import AgentBillSession
+
+        # Mock session with receipt_data
+        mock_session = AgentBillSession()
+        mock_session.receipt_data = sample_receipt_data
+        mock_conversation_manager.get_session.return_value = mock_session
 
         mock_client = Mock()
         mock_anthropic_class.return_value = mock_client
@@ -213,8 +220,8 @@ class TestRefineSplitWithLLM:
 
         # Execute
         refined_split, explanation = await refine_split_with_llm(
+            chat_id=12345,
             bill_split=sample_bill_split,
-            receipt_data=sample_receipt_data,
             issue_explanation="Discrepancy of 5.00 detected",
         )
 
@@ -222,14 +229,22 @@ class TestRefineSplitWithLLM:
         assert len(refined_split.participants) == 2
         assert explanation == "Adjusted item assignments to match receipt total"
         mock_client.messages.create.assert_called_once()
+        mock_conversation_manager.get_session.assert_called_once_with(12345)
 
     @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.conversation_manager")
     @patch("src.services.anthropic_service.AsyncAnthropic")
     async def test_refine_split_parsing_error(
-        self, mock_anthropic_class, sample_bill_split, sample_receipt_data
+        self, mock_anthropic_class, mock_conversation_manager, sample_bill_split, sample_receipt_data
     ):
         """Test refinement with invalid JSON response."""
         from unittest.mock import AsyncMock
+        from src.models.agent_state import AgentBillSession
+
+        # Mock session with receipt_data
+        mock_session = AgentBillSession()
+        mock_session.receipt_data = sample_receipt_data
+        mock_conversation_manager.get_session.return_value = mock_session
 
         mock_client = Mock()
         mock_anthropic_class.return_value = mock_client
@@ -241,18 +256,25 @@ class TestRefineSplitWithLLM:
 
         with pytest.raises(ValueError, match="Failed to refine bill split"):
             await refine_split_with_llm(
+                chat_id=12345,
                 bill_split=sample_bill_split,
-                receipt_data=sample_receipt_data,
                 issue_explanation="Discrepancy detected",
             )
 
     @pytest.mark.asyncio
+    @patch("src.tools.llm_processing.conversation_manager")
     @patch("src.services.anthropic_service.AsyncAnthropic")
     async def test_refine_split_calculation_error(
-        self, mock_anthropic_class, sample_bill_split, sample_receipt_data
+        self, mock_anthropic_class, mock_conversation_manager, sample_bill_split, sample_receipt_data
     ):
         """Test refinement when refined items cannot be matched."""
         from unittest.mock import AsyncMock
+        from src.models.agent_state import AgentBillSession
+
+        # Mock session with receipt_data
+        mock_session = AgentBillSession()
+        mock_session.receipt_data = sample_receipt_data
+        mock_conversation_manager.get_session.return_value = mock_session
 
         mock_client = Mock()
         mock_anthropic_class.return_value = mock_client
@@ -278,8 +300,8 @@ class TestRefineSplitWithLLM:
 
         with pytest.raises(ValueError, match="Cannot refine split due to item matching error|Failed to refine bill split"):
             await refine_split_with_llm(
+                chat_id=12345,
                 bill_split=sample_bill_split,
-                receipt_data=sample_receipt_data,
                 issue_explanation="Test error",
             )
 

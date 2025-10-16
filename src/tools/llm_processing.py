@@ -138,32 +138,45 @@ async def create_initial_bill_split(chat_id: int, description: str) -> BillSplit
 
 
 async def refine_split_with_llm(
-    bill_split: BillSplit, receipt_data: ReceiptData, issue_explanation: str
+    chat_id: int, bill_split: BillSplit, issue_explanation: str
 ) -> tuple[BillSplit, str]:
     """
     Use LLM to refine bill split based on identified issues.
 
     This is extracted from the LLM refinement portion of verify_and_refine_split.
     The agent should call this ONLY when it determines refinement is needed.
+    Receipt data is automatically fetched from session.
 
     Args:
+        chat_id: Telegram chat ID (for session retrieval)
         bill_split: Current bill split with issues
-        receipt_data: Original receipt data for reference
         issue_explanation: Description of the issue (e.g., discrepancy details)
 
     Returns:
         Tuple of (refined_bill_split, explanation_text)
 
     Raises:
-        ValueError: If refinement fails
+        ValueError: If refinement fails or no receipt data available in session
     """
     with tracer.start_as_current_span(
         "refine_split_with_llm", openinference_span_kind="tool"
     ) as span:
         span.set_attribute("llm.operation", "bill_split_refinement")
+        span.set_attribute("llm.chat_id", str(chat_id))
         span.set_attribute("llm.participants_count", len(bill_split.participants))
-        span.set_attribute("llm.receipt_items_count", len(receipt_data.items))
         span.set_attribute("llm.issue_explanation", issue_explanation[:200])
+
+        # Auto-retrieve receipt_data from session
+        session = conversation_manager.get_session(chat_id)
+        if not session.has_receipt_data():
+            raise ValueError(
+                "No receipt data available in session. OCR must be completed first."
+            )
+        receipt_data = session.receipt_data
+        logger.info("Retrieved cached receipt data from session for split refinement")
+        span.set_attribute("llm.receipt_source", "session_cache")
+
+        span.set_attribute("llm.receipt_items_count", len(receipt_data.items))
 
         service = AnthropicService()
 
@@ -319,7 +332,7 @@ Output ONLY a valid JSON object with this structure (no markdown, no explanation
 
 
 async def evaluate_bill_quality_with_llm(
-    bill_split: BillSplit, receipt_data: ReceiptData
+    chat_id: int, bill_split: BillSplit
 ) -> dict[str, Any]:
     """
     Use LLM to evaluate the quality of a bill split.
@@ -327,10 +340,11 @@ async def evaluate_bill_quality_with_llm(
     This provides a qualitative assessment after the quantitative metrics
     from evaluate_split_quality. The LLM can catch issues that pure math
     might miss (e.g., illogical assignments, missing items, etc.).
+    Receipt data is automatically fetched from session.
 
     Args:
+        chat_id: Telegram chat ID (for session retrieval)
         bill_split: Complete bill split with participant assignments
-        receipt_data: Original receipt data for reference
 
     Returns:
         Dictionary with evaluation results:
@@ -343,13 +357,25 @@ async def evaluate_bill_quality_with_llm(
         }
 
     Raises:
-        ValueError: If evaluation fails
+        ValueError: If evaluation fails or no receipt data available in session
     """
     with tracer.start_as_current_span(
         "evaluate_bill_quality_with_llm", openinference_span_kind="tool"
     ) as span:
         span.set_attribute("llm.operation", "bill_quality_evaluation")
+        span.set_attribute("llm.chat_id", str(chat_id))
         span.set_attribute("llm.participants_count", len(bill_split.participants))
+
+        # Auto-retrieve receipt_data from session
+        session = conversation_manager.get_session(chat_id)
+        if not session.has_receipt_data():
+            raise ValueError(
+                "No receipt data available in session. OCR must be completed first."
+            )
+        receipt_data = session.receipt_data
+        logger.info("Retrieved cached receipt data from session for quality evaluation")
+        span.set_attribute("llm.receipt_source", "session_cache")
+
         span.set_attribute("llm.receipt_items_count", len(receipt_data.items))
 
         service = AnthropicService()

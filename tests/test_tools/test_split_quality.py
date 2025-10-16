@@ -6,9 +6,27 @@ calculation tools.
 
 import pytest
 from decimal import Decimal
+from unittest.mock import patch
 
-from src.models.bill import BillSplit, ParticipantItem, ParticipantShare, ReceiptItem
+from src.models.bill import BillSplit, ParticipantItem, ParticipantShare, ReceiptItem, ReceiptData
+from src.models.agent_state import AgentBillSession
 from src.tools.split_quality import SplitQualityMetrics, evaluate_split_quality
+
+
+@pytest.fixture(autouse=True)
+def mock_conversation_manager_for_quality_tests(sample_receipt_items):
+    """Auto-mock conversation_manager for all tests in this file."""
+    with patch("src.tools.split_quality.conversation_manager") as mock_cm:
+        # Create a session with receipt data from sample_receipt_items
+        mock_session = AgentBillSession()
+        total = sum(item.total_price for item in sample_receipt_items)
+        mock_session.receipt_data = ReceiptData(
+            items=sample_receipt_items,
+            currency="USD",
+            total=total
+        )
+        mock_cm.get_session.return_value = mock_session
+        yield mock_cm
 
 
 class TestEvaluateSplitQuality:
@@ -17,7 +35,7 @@ class TestEvaluateSplitQuality:
     def test_evaluate_split_quality_perfect(self, sample_receipt_data, sample_bill_split):
         """Test evaluation of a perfect split with no discrepancy."""
         # Execute
-        metrics = evaluate_split_quality(sample_bill_split, sample_receipt_data)
+        metrics = evaluate_split_quality(12345, sample_bill_split)
 
         # Assert
         assert metrics.is_complete is True
@@ -65,7 +83,7 @@ class TestEvaluateSplitQuality:
         })()
 
         # Execute
-        metrics = evaluate_split_quality(imperfect_split, receipt_data_obj)
+        metrics = evaluate_split_quality(12345, imperfect_split)
 
         # Assert
         assert metrics.is_complete is False  # Not complete due to discrepancy
@@ -114,7 +132,7 @@ class TestEvaluateSplitQuality:
         })()
 
         # Execute
-        metrics = evaluate_split_quality(split_with_unassigned, receipt_data_obj)
+        metrics = evaluate_split_quality(12345, split_with_unassigned)
 
         # Assert
         assert metrics.is_complete is False  # Unassigned items present
@@ -126,11 +144,15 @@ class TestEvaluateSplitQuality:
         assert "Soda" in unassigned_names
 
     def test_evaluate_split_quality_within_tolerance(
-        self, sample_receipt_items
+        self, sample_receipt_items, mock_conversation_manager_for_quality_tests
     ):
         """Test evaluation with small discrepancy within tolerance."""
         # Setup - split with tiny rounding discrepancy
         total = sum(item.total_price for item in sample_receipt_items)
+
+        # Update the mock session's receipt_data to have the modified total
+        mock_session = mock_conversation_manager_for_quality_tests.get_session.return_value
+        mock_session.receipt_data.total = total + Decimal("0.01")
 
         # Create a split where the calculated totals differ by $0.01 from receipt
         # We'll do this by slightly modifying the receipt total
@@ -176,7 +198,7 @@ class TestEvaluateSplitQuality:
         )
 
         # Execute
-        metrics = evaluate_split_quality(perfect_split, receipt_data_obj)
+        metrics = evaluate_split_quality(12345, perfect_split)
 
         # Assert
         assert metrics.passes_accuracy_threshold is True  # $0.01 < 0.02
@@ -308,10 +330,14 @@ class TestSplitQualityMetrics:
 class TestEvaluateSplitQualityWithCustomTolerance:
     """Test evaluate_split_quality with custom tolerance."""
 
-    def test_custom_tolerance_passes(self, sample_receipt_items):
+    def test_custom_tolerance_passes(self, sample_receipt_items, mock_conversation_manager_for_quality_tests):
         """Test split passes with custom (higher) tolerance."""
         # Setup - split with $0.05 discrepancy
         total = sum(item.total_price for item in sample_receipt_items)
+
+        # Update the mock session's receipt_data to have the modified total
+        mock_session = mock_conversation_manager_for_quality_tests.get_session.return_value
+        mock_session.receipt_data.total = total + Decimal("0.05")
 
         receipt_data_obj = type('obj', (object,), {
             'items': sample_receipt_items,
@@ -356,17 +382,21 @@ class TestEvaluateSplitQualityWithCustomTolerance:
 
         # Execute with higher tolerance
         metrics = evaluate_split_quality(
-            perfect_split, receipt_data_obj, tolerance=Decimal("0.10")
+            12345, perfect_split, tolerance=Decimal("0.10")
         )
 
         # Assert
         assert metrics.passes_accuracy_threshold is True  # $0.05 < $0.10
         assert metrics.total_discrepancy == Decimal("0.05")
 
-    def test_custom_tolerance_fails(self, sample_receipt_items):
+    def test_custom_tolerance_fails(self, sample_receipt_items, mock_conversation_manager_for_quality_tests):
         """Test split fails with custom (stricter) tolerance."""
         # Setup - split with $0.015 discrepancy
         total = sum(item.total_price for item in sample_receipt_items)
+
+        # Update the mock session's receipt_data to have the modified total
+        mock_session = mock_conversation_manager_for_quality_tests.get_session.return_value
+        mock_session.receipt_data.total = total + Decimal("0.015")
 
         receipt_data_obj = type('obj', (object,), {
             'items': sample_receipt_items,
@@ -411,7 +441,7 @@ class TestEvaluateSplitQualityWithCustomTolerance:
 
         # Execute with stricter tolerance
         metrics = evaluate_split_quality(
-            perfect_split, receipt_data_obj, tolerance=Decimal("0.01")
+            12345, perfect_split, tolerance=Decimal("0.01")
         )
 
         # Assert

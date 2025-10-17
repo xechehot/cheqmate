@@ -1,19 +1,18 @@
 # cheqmate 🧾
 
-**Split restaurant bills effortlessly with AI.**
+**AI-powered receipt recognition for Telegram.**
 
-A Telegram bot that takes your voice note + receipt photo and automatically splits the bill among friends. Just say who ordered what, snap a photo of the receipt, and let AI handle the rest.
+A Telegram bot that extracts items, prices, and totals from receipt photos using Claude Vision API. Perfect for digitizing receipts and understanding what you paid for.
 
 ## What is this?
 
-cheqmate eliminates the tedious part of splitting restaurant bills:
+cheqmate makes receipt scanning simple:
 
-1. **Record a voice note** - "Петя взял борщ и пиво, я взял салат..."
-2. **Snap a photo of the receipt** - AI reads it (even in foreign languages!)
-3. **Get the split** - Automatically matches dishes to people and calculates shares
-4. **Export** - Send to Splitwise/Tricount with one tap
+1. **Use `/new_bill` to start** - Begin a new receipt recognition session
+2. **Snap a photo of the receipt** - AI reads it using Claude Vision (works with any language!)
+3. **Get the items** - Automatically extracts all items with prices and quantities
 
-Perfect for group dinners where apps like Splitwise help track IOUs but don't simplify data entry.
+Perfect for tracking expenses, understanding receipts, or building expense management workflows.
 
 ## Prerequisites
 
@@ -21,8 +20,7 @@ Perfect for group dinners where apps like Splitwise help track IOUs but don't si
 - **uv** - Fast Python package manager ([install here](https://docs.astral.sh/uv/))
 - **API Keys:**
   - [Telegram Bot Token](https://t.me/botfather) (free)
-  - [OpenAI API Key](https://platform.openai.com/api-keys) (for Whisper + GPT-4 Vision)
-  - [Splitwise API](https://secure.splitwise.com/apps) (optional, for export)
+  - [Anthropic API Key](https://console.anthropic.com/) (for Claude Vision)
 
 ## Get Started
 
@@ -76,24 +74,22 @@ uv run ruff format .
 ## Architecture
 
 ```
-Voice Note → Whisper API → Extract participants & orders
-Photo → GPT-4 Vision → Extract receipt items & prices
+User sends /new_bill
          ↓
-   Fuzzy Matching → Assign dishes to people
+User sends receipt photo
          ↓
-   Calculate Split → Including tax/tip
+Claude Vision API → Extract receipt items & prices
          ↓
-   Export → Splitwise/Tricount
+Display formatted results
 ```
 
 ## Tech Stack
 
 - **Python 3.13** + **uv**
 - **python-telegram-bot** - Bot framework
-- **OpenAI** - Whisper (voice) + GPT-4 Vision (OCR)
-- **thefuzz** - Fuzzy string matching
-- **SQLAlchemy** - Conversation state
-- **Splitwise SDK** - Export integration
+- **Anthropic Claude** - Claude Vision API for receipt OCR
+- **Pydantic** - Data validation and settings
+- **httpx** - Async HTTP client
 
 ## Contributing
 

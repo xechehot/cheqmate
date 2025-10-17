@@ -6,7 +6,7 @@ from typing import Final
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from src.bot.handlers import new_bill_command, photo_message_handler, text_message_handler
+from src.bot.handlers import new_bill_command, photo_message_handler
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -15,32 +15,19 @@ logger = logging.getLogger(__name__)
 CAPABILITIES_MESSAGE: Final[str] = """
 👋 **Welcome to CheqMate!**
 
-I'm your smart restaurant bill-splitting assistant. Here's what I can do:
-
-🎤 **Voice Notes**
-Send me voice notes describing who ordered what at your meal. I'll transcribe and understand who's responsible for which dishes.
+I'm your smart receipt recognition assistant powered by AI.
 
 📸 **Receipt Scanning**
-Take a photo of your receipt, and I'll extract all the items, prices, and totals using AI-powered OCR.
-
-🎯 **Auto-Assignment**
-I'll automatically match dishes from the receipt to the people you mentioned in your voice notes using smart fuzzy matching.
-
-💰 **Smart Splitting**
-I'll calculate each person's share, including their portion of tax and tip, so everyone pays their fair amount.
-
-📤 **Export to Apps**
-Push the split directly to Splitwise or Tricount to settle up with your friends.
+Take a photo of your receipt, and I'll extract all the items, prices, and totals using AI-powered OCR with Claude Vision.
 
 ---
 
 **How to use:**
-1. Send a voice note describing the order (e.g., "I had the burger, Sarah had the salad")
+1. Use `/new_bill` or `/new` to start
 2. Send a photo of the receipt
-3. Review the automatic split
-4. Export to your preferred app
+3. Review the extracted items
 
-Ready to split some bills? Let's get started!
+Ready to scan some receipts? Let's get started!
 
 Type /help anytime to see this message again.
 """
@@ -83,9 +70,8 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("new_bill", new_bill_command))
     application.add_handler(CommandHandler("new", new_bill_command))
 
-    # Register message handlers (order matters - more specific first)
+    # Register message handlers
     application.add_handler(MessageHandler(filters.PHOTO, photo_message_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
 
     # Register error handler
     application.add_error_handler(error_handler)

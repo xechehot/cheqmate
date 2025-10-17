@@ -4,19 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**cheqmate** is a Telegram bot that splits restaurant bills using voice notes and receipt photos. It automatically assigns dishes to friends and exports splits to Splitwise/Tricount.
+**cheqmate** is a Telegram bot that recognizes and extracts items from receipt photos using AI-powered OCR with Claude Vision.
 
 ## Technology Stack
 
 - **Python 3.13**: Required Python version
 - **uv**: Package and dependency manager
 - **python-telegram-bot**: Telegram bot framework with async support
-- **OpenAI API**: Whisper for voice transcription, GPT-4 Vision for receipt OCR
-- **Anthropic Claude**: Alternative vision API for receipt processing
-- **thefuzz + python-Levenshtein**: Fuzzy string matching for dish assignment
-- **Splitwise SDK**: Export functionality for Splitwise
-- **httpx**: Async HTTP client for Tricount API
-- **SQLAlchemy**: Database ORM for storing conversation state
+- **Anthropic Claude**: Claude Vision API for receipt OCR
+- **httpx**: Async HTTP client
 - **Pydantic**: Data validation and settings management
 
 ## Development Setup
@@ -76,26 +72,20 @@ The application follows a modular architecture with these key components:
 
 ### Core Modules
 
-1. **Bot Handler** - Telegram bot interface that receives voice notes and photos
-2. **Voice Processor** - Transcribes voice notes to extract order details and participant names
-3. **Receipt Scanner** - OCR engine to extract items, prices, and totals from receipt photos
-4. **Bill Splitter** - Logic to match dishes to people and calculate individual shares (including tax/tip)
-5. **Export Service** - API integrations for Splitwise and Tricount
+1. **Bot Handler** - Telegram bot interface that receives receipt photos
+2. **Receipt Scanner** - OCR engine using Claude Vision to extract items, prices, and totals from receipt photos
+3. **Conversation Manager** - In-memory session state management per chat
 
 ### Data Flow
 
 ```
-User Input (Voice + Photo)
+User sends /new_bill
     ↓
-Voice Transcription → Extract participants & verbal order
+User sends receipt photo
     ↓
-Receipt OCR → Extract line items & prices
+Receipt OCR (Claude Vision) → Extract line items & prices
     ↓
-Matching Engine → Auto-assign dishes to people
-    ↓
-Split Calculator → Calculate individual amounts
-    ↓
-Export Service → Push to Splitwise/Tricount
+Display extracted items to user
 ```
 
 ## Configuration
@@ -103,11 +93,9 @@ Export Service → Push to Splitwise/Tricount
 Copy `.env.example` to `.env` and fill in your API keys:
 
 - `TELEGRAM_BOT_TOKEN`: Get from [@BotFather](https://t.me/botfather) on Telegram
-- `OPENAI_API_KEY`: For Whisper voice transcription and GPT-4 Vision OCR
-- `ANTHROPIC_API_KEY`: Alternative to OpenAI for receipt processing
-- `SPLITWISE_CONSUMER_KEY` & `SPLITWISE_CONSUMER_SECRET`: From [Splitwise Apps](https://secure.splitwise.com/apps)
-- `TRICOUNT_API_KEY`: For Tricount integration (if available)
-- `DATABASE_URL`: SQLite path (default: `sqlite:///cheqmate.db`)
+- `ANTHROPIC_API_KEY`: For Claude Vision receipt OCR
+- `DEBUG`: Debug mode (default: `True`)
+- `LOG_LEVEL`: Logging level (default: `INFO`)
 
 ## Project Structure Conventions
 

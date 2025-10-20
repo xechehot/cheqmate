@@ -9,7 +9,13 @@ from decimal import Decimal
 from anthropic import Anthropic
 
 from src.config import settings
-from src.models.bill import BillSplit, ParticipantShare, Receipt, ReceiptItem
+from src.models.bill import (
+    BillSplit,
+    ParticipantShare,
+    Receipt,
+    ReceiptItem,
+    format_currency,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,27 +92,31 @@ class AnthropicService:
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
         # Create structured prompt for receipt extraction with clear output format
-        prompt = """Analyze this receipt image and extract restaurant info, items, and total.
+        prompt = """Analyze this receipt image and extract restaurant info, items, currency, and total.
 
 First, carefully examine the receipt to identify:
 1. Restaurant name (usually at the top of the receipt)
 2. Restaurant address (if visible on the receipt)
-3. All individual items/dishes with their descriptions
-4. Quantities (if specified, otherwise default to 1)
-5. Line total for each item (the total amount charged for that line - this is ALWAYS shown on receipts)
-6. Unit price for each item (if shown separately on the receipt - this is OPTIONAL)
-7. Grand total (the final total amount)
+3. Currency (look for currency symbols like $, €, ₸, or currency codes like USD, EUR, KZT)
+4. All individual items/dishes with their descriptions
+5. Quantities (if specified, otherwise default to 1)
+6. Line total for each item (the total amount charged for that line - this is ALWAYS shown on receipts)
+7. Unit price for each item (if shown separately on the receipt - this is OPTIONAL)
+8. Grand total (the final total amount)
 
 IMPORTANT:
+- "currency" should be the 3-letter currency code (USD, EUR, KZT, etc.) - identify from symbols or text on receipt
 - "line_total" is the total price for that line item (quantity × unit_price) - ALWAYS present on receipt
 - "unit_price" is optional - only include it if explicitly shown on the receipt
 - If unit_price is not shown, omit it (it will be calculated automatically)
 - restaurant_name and restaurant_address can be null if not visible on the receipt
+- If currency is unclear, default to "USD"
 
 Then output ONLY a valid JSON object with this exact structure (no markdown, no explanations):
 {
   "restaurant_name": "Restaurant Name",
   "restaurant_address": "123 Main St, City, State",
+  "currency": "USD",
   "items": [
     {"description": "item description", "line_total": 25.00, "quantity": 2, "unit_price": 12.50}
   ],
@@ -171,12 +181,14 @@ Note: unit_price is optional in the items array. restaurant_name and restaurant_
             receipt = Receipt(
                 restaurant_name=receipt_data.get("restaurant_name"),
                 restaurant_address=receipt_data.get("restaurant_address"),
+                currency=receipt_data.get("currency", "USD"),
                 items=items,
                 total=Decimal(str(receipt_data["total"])),
             )
 
+            total_fmt = format_currency(receipt.total, receipt.currency)
             logger.info(
-                f"Extracted receipt from {receipt.restaurant_name or 'Unknown'} with {len(items)} items, total: ${receipt.total:.2f}"
+                f"Extracted receipt from {receipt.restaurant_name or 'Unknown'} with {len(items)} items, total: {total_fmt}"
             )
             return receipt
         except (json.JSONDecodeError, KeyError, ValueError) as e:
@@ -202,11 +214,14 @@ Note: unit_price is optional in the items array. restaurant_name and restaurant_
         # Format receipt items for prompt
         items_text = "\n".join(
             [
-                f"- {item.description}: ${item.line_total:.2f}"
+                f"- {item.description}: {format_currency(item.line_total, receipt.currency)}"
                 + (f" (x{item.quantity})" if item.quantity > 1 else "")
                 for item in receipt.items
             ]
         )
+
+        # Format total for display
+        total_fmt = format_currency(receipt.total, receipt.currency)
 
         # Create structured prompt for bill splitting
         prompt = f"""You are helping split a restaurant bill among friends.
@@ -217,7 +232,7 @@ Note: unit_price is optional in the items array. restaurant_name and restaurant_
 **Receipt items extracted:**
 {items_text}
 
-**Total bill amount: ${receipt.total}**
+**Total bill amount: {total_fmt}**
 
 **Task:**
 1. Analyze the participant description to identify each person's name
@@ -226,7 +241,7 @@ Note: unit_price is optional in the items array. restaurant_name and restaurant_
 4. Calculate each person's total amount based on the items they ordered (proportional to the total bill)
 
 **Important:**
-- All participant amounts must sum to exactly ${receipt.total}
+- All participant amounts must sum to exactly {receipt.total} (the numeric value)
 - If items are shared, split the cost proportionally
 - Match receipt items to participants as accurately as possible
 - If someone's share is unclear, distribute proportionally
@@ -242,7 +257,7 @@ Output ONLY a valid JSON object with this exact structure (no markdown, no expla
   ]
 }}
 
-The sum of all participant amounts must equal ${receipt.total}."""
+The sum of all participant amounts must equal {receipt.total}."""
 
         # Call Claude API with response prefilling
         message = self.client.messages.create(

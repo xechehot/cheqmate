@@ -7,8 +7,10 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from src.bot.conversation_manager import conversation_manager
+from src.models.bill import format_currency
 from src.models.conversation_state import BillSession, ConversationStep
 from src.services.anthropic_service import AnthropicService
+from src.utils.bill_calculations import validate_split
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +87,14 @@ async def process_bill_split(
             receipt=session.receipt_data,  # type: ignore
         )
 
-        # Format and send the result
+        # Validate the split using Python calculations
+        is_valid, validation_message, details = validate_split(bill_split)
+
+        # Format the result
         result_text = bill_split.format_summary()
+
+        # Add validation info
+        result_text += f"\n\n{validation_message}"
 
         # Delete processing message
         await processing_message.delete()
@@ -174,12 +182,15 @@ async def photo_message_handler(
         receipt = await anthropic_service.extract_receipt_items(bytes(image_bytes))
 
         # Log parsed receipt data
+        total_fmt = format_currency(receipt.total, receipt.currency)
         logger.info(
-            f"Extracted receipt from {receipt.restaurant_name or 'Unknown'} with {len(receipt.items)} items, total: ${receipt.total:.2f}"
+            f"Extracted receipt from {receipt.restaurant_name or 'Unknown'} with {len(receipt.items)} items, total: {total_fmt}"
         )
         for item in receipt.items:
+            unit_price_fmt = format_currency(item.unit_price, receipt.currency)
+            line_total_fmt = format_currency(item.line_total, receipt.currency)
             logger.info(
-                f"  - {item.description}: ${item.unit_price:.2f} x{item.quantity} = ${item.line_total:.2f}"
+                f"  - {item.description}: {unit_price_fmt} x{item.quantity} = {line_total_fmt}"
             )
 
         # Delete processing message
@@ -201,17 +212,19 @@ async def photo_message_handler(
         receipt_text_lines.append("📋 **Items:**")
         for item in receipt.items:
             if item.quantity > 1:
+                unit_price_fmt = format_currency(item.unit_price, receipt.currency)
+                line_total_fmt = format_currency(item.line_total, receipt.currency)
                 receipt_text_lines.append(
-                    f"• {item.description}: ${item.unit_price:.2f} x{item.quantity} = ${item.line_total:.2f}"
+                    f"• {item.description}: {unit_price_fmt} x{item.quantity} = {line_total_fmt}"
                 )
             else:
-                receipt_text_lines.append(
-                    f"• {item.description}: ${item.line_total:.2f}"
-                )
+                line_total_fmt = format_currency(item.line_total, receipt.currency)
+                receipt_text_lines.append(f"• {item.description}: {line_total_fmt}")
 
         # Add total
         receipt_text_lines.append("")  # Empty line for spacing
-        receipt_text_lines.append(f"💵 **Total: ${receipt.total:.2f}**")
+        total_fmt = format_currency(receipt.total, receipt.currency)
+        receipt_text_lines.append(f"💵 **Total: {total_fmt}**")
 
         receipt_text = "\n".join(receipt_text_lines)
 

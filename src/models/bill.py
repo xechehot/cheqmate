@@ -6,6 +6,41 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 
+def format_currency(amount: Decimal, currency: str) -> str:
+    """
+    Format a decimal amount with the appropriate currency symbol or code.
+
+    Args:
+        amount: The amount to format
+        currency: Currency code (e.g., "USD", "EUR", "KZT")
+
+    Returns:
+        Formatted string with currency symbol (e.g., "$10.50", "€10.50", "10.50 KZT")
+    """
+    # Map common currency codes to symbols
+    currency_symbols = {
+        "USD": "$",
+        "EUR": "€",
+        "GBP": "£",
+        "JPY": "¥",
+        "CNY": "¥",
+        "KZT": "₸",
+        "RUB": "₽",
+    }
+
+    symbol = currency_symbols.get(currency.upper(), "")
+
+    if symbol:
+        # Symbol before amount for most currencies
+        if currency.upper() in ["EUR", "RUB", "KZT"]:
+            return f"{amount:.2f} {symbol}"
+        else:
+            return f"{symbol}{amount:.2f}"
+    else:
+        # Use currency code if no symbol available
+        return f"{amount:.2f} {currency}"
+
+
 class ReceiptItem(BaseModel):
     """Represents a single item from a receipt."""
 
@@ -42,6 +77,9 @@ class Receipt(BaseModel):
     )
     restaurant_address: str | None = Field(
         default=None, description="Address of the restaurant"
+    )
+    currency: str = Field(
+        default="USD", description="Currency code (e.g., USD, EUR, KZT)"
     )
     items: list[ReceiptItem] = Field(description="All items from the receipt")
     total: Decimal = Field(description="Grand total of the receipt")
@@ -82,14 +120,18 @@ class BillSplit(BaseModel):
         lines.append("📋 **Receipt Items:**")
         for item in self.receipt.items:
             if item.quantity > 1:
+                unit_price_fmt = format_currency(item.unit_price, self.receipt.currency)
+                line_total_fmt = format_currency(item.line_total, self.receipt.currency)
                 lines.append(
-                    f"• {item.description}: ${item.unit_price:.2f} x{item.quantity} = ${item.line_total:.2f}"
+                    f"• {item.description}: {unit_price_fmt} x{item.quantity} = {line_total_fmt}"
                 )
             else:
-                lines.append(f"• {item.description}: ${item.line_total:.2f}")
+                line_total_fmt = format_currency(item.line_total, self.receipt.currency)
+                lines.append(f"• {item.description}: {line_total_fmt}")
 
         lines.append("")
-        lines.append(f"💵 **Total: ${self.receipt.total:.2f}**")
+        total_fmt = format_currency(self.receipt.total, self.receipt.currency)
+        lines.append(f"💵 **Total: {total_fmt}**")
         lines.append("")
         lines.append("---")
         lines.append("")
@@ -100,6 +142,7 @@ class BillSplit(BaseModel):
             lines.append(f"\n**{participant.name}:**")
             if participant.items:
                 lines.append(f"Items: {', '.join(participant.items)}")
-            lines.append(f"**Amount: ${participant.amount:.2f}**")
+            amount_fmt = format_currency(participant.amount, self.receipt.currency)
+            lines.append(f"**Amount: {amount_fmt}**")
 
         return "\n".join(lines)

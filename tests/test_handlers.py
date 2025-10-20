@@ -93,9 +93,7 @@ class TestPhotoMessageHandler:
         session.start_new_bill()
 
         # Mock AnthropicService
-        with patch(
-            "src.bot.handlers.AnthropicService"
-        ) as MockAnthropicService:
+        with patch("src.bot.handlers.AnthropicService") as MockAnthropicService:
             mock_service = MagicMock()
             mock_service.extract_receipt_items = AsyncMock(
                 return_value=sample_receipt_usd
@@ -125,9 +123,7 @@ class TestPhotoMessageHandler:
         session = conversation_manager.get_session(chat_id)
         session.start_new_bill()
 
-        with patch(
-            "src.bot.handlers.AnthropicService"
-        ) as MockAnthropicService:
+        with patch("src.bot.handlers.AnthropicService") as MockAnthropicService:
             mock_service = MagicMock()
             mock_service.extract_receipt_items = AsyncMock(
                 return_value=sample_receipt_usd
@@ -168,9 +164,7 @@ class TestPhotoMessageHandler:
         # Pre-set description
         session.participant_description = "Alice had burger, Bob had salad"
 
-        with patch(
-            "src.bot.handlers.AnthropicService"
-        ) as MockAnthropicService:
+        with patch("src.bot.handlers.AnthropicService") as MockAnthropicService:
             mock_service = MagicMock()
             mock_service.extract_receipt_items = AsyncMock(
                 return_value=sample_receipt_usd
@@ -218,9 +212,7 @@ class TestPhotoMessageHandler:
         session.start_new_bill()
 
         # Mock service to raise error
-        with patch(
-            "src.bot.handlers.AnthropicService"
-        ) as MockAnthropicService:
+        with patch("src.bot.handlers.AnthropicService") as MockAnthropicService:
             mock_service = MagicMock()
             mock_service.extract_receipt_items = AsyncMock(
                 side_effect=Exception("API Error")
@@ -282,9 +274,7 @@ class TestTextMessageHandler:
         session.receipt_data = sample_receipt_usd
         session.step = ConversationStep.AWAITING_DESCRIPTION
 
-        with patch(
-            "src.bot.handlers.AnthropicService"
-        ) as MockAnthropicService:
+        with patch("src.bot.handlers.AnthropicService") as MockAnthropicService:
             mock_service = MagicMock()
             mock_service.split_bill = AsyncMock(return_value=sample_bill_split_usd)
             MockAnthropicService.return_value = mock_service
@@ -332,14 +322,14 @@ class TestProcessBillSplit:
         session.participant_description = "Alice had burger, Bob had salad"
         session.step = ConversationStep.PROCESSING
 
-        with patch(
-            "src.bot.handlers.AnthropicService"
-        ) as MockAnthropicService:
+        with patch("src.bot.handlers.AnthropicService") as MockAnthropicService:
             mock_service = MagicMock()
             mock_service.split_bill = AsyncMock(return_value=sample_bill_split_usd)
             MockAnthropicService.return_value = mock_service
 
-            await process_bill_split(mock_telegram_update, mock_telegram_context, session)
+            await process_bill_split(
+                mock_telegram_update, mock_telegram_context, session
+            )
 
             # Verify split result was sent
             call_args = [
@@ -366,14 +356,14 @@ class TestProcessBillSplit:
         session.participant_description = "Alice had burger, Bob had salad"
         session.step = ConversationStep.PROCESSING
 
-        with patch(
-            "src.bot.handlers.AnthropicService"
-        ) as MockAnthropicService:
+        with patch("src.bot.handlers.AnthropicService") as MockAnthropicService:
             mock_service = MagicMock()
             mock_service.split_bill = AsyncMock(return_value=sample_bill_split_usd)
             MockAnthropicService.return_value = mock_service
 
-            await process_bill_split(mock_telegram_update, mock_telegram_context, session)
+            await process_bill_split(
+                mock_telegram_update, mock_telegram_context, session
+            )
 
             # Verify validation message was included
             call_args = [
@@ -399,14 +389,14 @@ class TestProcessBillSplit:
         session.participant_description = "Alice had burger"
         session.step = ConversationStep.PROCESSING
 
-        with patch(
-            "src.bot.handlers.AnthropicService"
-        ) as MockAnthropicService:
+        with patch("src.bot.handlers.AnthropicService") as MockAnthropicService:
             mock_service = MagicMock()
             mock_service.split_bill = AsyncMock(return_value=sample_bill_split_usd)
             MockAnthropicService.return_value = mock_service
 
-            await process_bill_split(mock_telegram_update, mock_telegram_context, session)
+            await process_bill_split(
+                mock_telegram_update, mock_telegram_context, session
+            )
 
             # Verify session was reset
             session = conversation_manager.get_session(chat_id)
@@ -428,16 +418,14 @@ class TestProcessBillSplit:
         session.participant_description = "Alice had burger"
         session.step = ConversationStep.PROCESSING
 
-        with patch(
-            "src.bot.handlers.AnthropicService"
-        ) as MockAnthropicService:
+        with patch("src.bot.handlers.AnthropicService") as MockAnthropicService:
             mock_service = MagicMock()
-            mock_service.split_bill = AsyncMock(
-                side_effect=Exception("Split error")
-            )
+            mock_service.split_bill = AsyncMock(side_effect=Exception("Split error"))
             MockAnthropicService.return_value = mock_service
 
-            await process_bill_split(mock_telegram_update, mock_telegram_context, session)
+            await process_bill_split(
+                mock_telegram_update, mock_telegram_context, session
+            )
 
             # Verify error message was sent
             call_args = [

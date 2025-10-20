@@ -11,11 +11,13 @@ from anthropic import Anthropic
 from src.config import settings
 from src.models.bill import (
     BillSplit,
+    ParticipantItem,
     ParticipantShare,
     Receipt,
     ReceiptItem,
     format_currency,
 )
+from src.utils.bill_calculations import calculate_participant_total
 
 logger = logging.getLogger(__name__)
 
@@ -236,28 +238,44 @@ Note: unit_price is optional in the items array. restaurant_name and restaurant_
 
 **Task:**
 1. Analyze the participant description to identify each person's name
-2. Match what items each person ordered (use fuzzy matching with the receipt items)
-3. Handle shared items by splitting them proportionally among the people who shared them
-4. Calculate each person's total amount based on the items they ordered (proportional to the total bill)
+2. Match what items each person ordered to the receipt items (use exact or fuzzy matching)
+3. For each item a person ordered, determine the fractional quantity:
+   - line_nominator: how many shares/portions this person has (numerator)
+   - line_denominator: total number of shares/portions for this item (denominator)
+4. Handle shared items by assigning fractional quantities to each person who shared
+
+**Examples:**
+- If Alice had 1 burger and there were 2 burgers total on the receipt: {{"item_name": "Burger", "line_nominator": 1, "line_denominator": 2}}
+- If Bob and Carol shared a salad equally: Both get {{"item_name": "Salad", "line_nominator": 1, "line_denominator": 2}}
+- If Dave had an entire pasta dish: {{"item_name": "Pasta", "line_nominator": 1, "line_denominator": 1}}
 
 **Important:**
-- All participant amounts must sum to exactly {receipt.total} (the numeric value)
-- If items are shared, split the cost proportionally
-- Match receipt items to participants as accurately as possible
-- If someone's share is unclear, distribute proportionally
+- ONLY include items that exist on the receipt (exclude items not found on receipt)
+- Use exact or close-matching item names from the receipt
+- line_nominator and line_denominator must be positive integers
+- For full (unshared) items, use line_nominator=1 and line_denominator=1
+- DO NOT calculate amounts - only provide item names and fractional quantities
 
 Output ONLY a valid JSON object with this exact structure (no markdown, no explanations):
 {{
   "participants": [
     {{
       "name": "Person Name",
-      "items": ["item1", "item2"],
-      "amount": 25.50
+      "items": [
+        {{
+          "item_name": "Burger",
+          "line_nominator": 1,
+          "line_denominator": 2
+        }},
+        {{
+          "item_name": "Salad",
+          "line_nominator": 1,
+          "line_denominator": 1
+        }}
+      ]
     }}
   ]
-}}
-
-The sum of all participant amounts must equal {receipt.total}."""
+}}"""
 
         # Call Claude API with response prefilling
         message = self.client.messages.create(
@@ -288,15 +306,31 @@ The sum of all participant amounts must equal {receipt.total}."""
         try:
             split_data = json.loads(json_text)
 
-            # Build ParticipantShare objects
-            participants = [
-                ParticipantShare(
-                    name=p["name"],
-                    items=p["items"],
-                    amount=Decimal(str(p["amount"])),
+            # Build ParticipantShare objects with ParticipantItem objects
+            participants = []
+            for p in split_data["participants"]:
+                # Parse ParticipantItem objects
+                participant_items = [
+                    ParticipantItem(
+                        item_name=item["item_name"],
+                        line_nominator=item["line_nominator"],
+                        line_denominator=item["line_denominator"],
+                    )
+                    for item in p["items"]
+                ]
+
+                # Calculate amount using Python (not from LLM)
+                calculated_amount = calculate_participant_total(
+                    participant_items, receipt.items
                 )
-                for p in split_data["participants"]
-            ]
+
+                # Create ParticipantShare with calculated amount
+                participant_share = ParticipantShare(
+                    name=p["name"],
+                    items=participant_items,
+                    amount=calculated_amount,
+                )
+                participants.append(participant_share)
 
             # Build BillSplit object
             bill_split = BillSplit(

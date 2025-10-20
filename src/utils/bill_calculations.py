@@ -3,7 +3,13 @@
 import logging
 from decimal import Decimal
 
-from src.models.bill import BillSplit, ParticipantShare, ReceiptItem, format_currency
+from src.models.bill import (
+    BillSplit,
+    ParticipantItem,
+    ParticipantShare,
+    ReceiptItem,
+    format_currency,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +122,125 @@ def calculate_discrepancy(
     return absolute_diff, percentage_diff
 
 
+def find_receipt_item_by_name(
+    item_name: str, receipt_items: list[ReceiptItem]
+) -> ReceiptItem | None:
+    """
+    Find a single receipt item by name using fuzzy matching.
+
+    Args:
+        item_name: Name of the item to find
+        receipt_items: All items from the receipt
+
+    Returns:
+        Matched ReceiptItem or None if not found
+    """
+    item_name_lower = item_name.lower().strip()
+
+    # Try exact match first (case-insensitive)
+    for receipt_item in receipt_items:
+        if receipt_item.description.lower().strip() == item_name_lower:
+            return receipt_item
+
+    # Try partial match (fuzzy)
+    for receipt_item in receipt_items:
+        if (
+            item_name_lower in receipt_item.description.lower()
+            or receipt_item.description.lower() in item_name_lower
+        ):
+            return receipt_item
+
+    return None
+
+
+def calculate_participant_item_total(
+    participant_item: ParticipantItem, receipt_items: list[ReceiptItem]
+) -> Decimal:
+    """
+    Calculate the total cost for a single participant item.
+
+    Formula: (line_nominator / line_denominator) × receipt_item.line_total
+
+    Args:
+        participant_item: The participant's item with fractional quantity
+        receipt_items: All items from the receipt
+
+    Returns:
+        Total cost for this item (Decimal)
+    """
+    # Find matching receipt item
+    receipt_item = find_receipt_item_by_name(participant_item.item_name, receipt_items)
+
+    if receipt_item is None:
+        logger.warning(
+            f"Could not find receipt item matching '{participant_item.item_name}'"
+        )
+        return Decimal("0")
+
+    # Calculate fractional share
+    fraction = Decimal(participant_item.line_nominator) / Decimal(
+        participant_item.line_denominator
+    )
+    item_total = fraction * receipt_item.line_total
+
+    logger.debug(
+        f"Item '{participant_item.item_name}': "
+        f"{participant_item.line_nominator}/{participant_item.line_denominator} "
+        f"× {receipt_item.line_total} = {item_total}"
+    )
+
+    return item_total
+
+
+def calculate_participant_total(
+    participant_items: list[ParticipantItem], receipt_items: list[ReceiptItem]
+) -> Decimal:
+    """
+    Calculate total amount for a participant based on their items.
+
+    Args:
+        participant_items: List of ParticipantItem objects
+        receipt_items: All items from the receipt
+
+    Returns:
+        Total amount this participant owes (Decimal)
+    """
+    total = Decimal("0")
+    for item in participant_items:
+        item_total = calculate_participant_item_total(item, receipt_items)
+        total += item_total
+
+    return total
+
+
+def calculate_split_discrepancy(
+    bill_split: BillSplit,
+) -> tuple[Decimal, Decimal, Decimal]:
+    """
+    Calculate discrepancy between sum of participant totals and receipt total.
+
+    Args:
+        bill_split: The complete bill split
+
+    Returns:
+        Tuple of (calculated_split_total, discrepancy_amount, discrepancy_percentage)
+    """
+    # Calculate total from all participants
+    calculated_split_total = Decimal("0")
+    for participant in bill_split.participants:
+        participant_total = calculate_participant_total(
+            participant.items, bill_split.receipt.items
+        )
+        calculated_split_total += participant_total
+
+    # Calculate discrepancy
+    discrepancy_amount, discrepancy_pct = calculate_discrepancy(
+        bill_split.receipt.total, calculated_split_total
+    )
+
+    return calculated_split_total, discrepancy_amount, discrepancy_pct
+
+
 def validate_split(
     bill_split: BillSplit, threshold_percentage: Decimal = Decimal("1.0")
 ) -> tuple[bool, str, dict[str, Decimal]]:
@@ -123,9 +248,9 @@ def validate_split(
     Validate that the bill split amounts are mathematically correct.
 
     This function:
-    1. Calculates accurate subtotals using Python (not LLM math)
-    2. Compares with LLM-provided amounts
-    3. Calculates discrepancy from original total
+    1. Calculates participant totals from their ParticipantItem objects
+    2. Sums all participant totals
+    3. Calculates discrepancy from original receipt total
     4. Returns validation result
 
     Args:
@@ -136,38 +261,21 @@ def validate_split(
         Tuple of:
         - is_valid: True if discrepancy is within threshold
         - message: Human-readable validation message
-        - details: Dict with calculated_total, llm_total, discrepancy_amount, discrepancy_pct
+        - details: Dict with calculated_total, discrepancy_amount, discrepancy_pct
     """
     receipt = bill_split.receipt
-    participants = bill_split.participants
 
-    # Calculate accurate split total using Python and receipt data
-    calculated_split_total = calculate_split_total(participants, receipt.items)
-
-    # Sum up LLM-provided amounts
-    llm_split_total = sum(
-        (participant.amount for participant in participants), start=Decimal("0")
-    )
-
-    # Calculate discrepancy from original receipt total
-    discrepancy_amount, discrepancy_pct = calculate_discrepancy(
-        receipt.total, calculated_split_total
-    )
-
-    # Calculate discrepancy between LLM amounts and calculated amounts
-    llm_diff, llm_diff_pct = calculate_discrepancy(
-        llm_split_total, calculated_split_total
+    # Calculate split total using new ParticipantItem-based calculation
+    calculated_split_total, discrepancy_amount, discrepancy_pct = (
+        calculate_split_discrepancy(bill_split)
     )
 
     # Prepare details dict
     details = {
         "calculated_total": calculated_split_total,
-        "llm_total": llm_split_total,
         "original_total": receipt.total,
         "discrepancy_amount": discrepancy_amount,
         "discrepancy_pct": discrepancy_pct,
-        "llm_diff_amount": llm_diff,
-        "llm_diff_pct": llm_diff_pct,
     }
 
     # Check if within threshold
@@ -197,8 +305,7 @@ def validate_split(
 
     logger.info(
         f"Split validation: original={receipt.total}, calculated={calculated_split_total}, "
-        f"llm={llm_split_total}, discrepancy={discrepancy_amount} ({discrepancy_pct:.2f}%), "
-        f"valid={is_valid}"
+        f"discrepancy={discrepancy_amount} ({discrepancy_pct:.2f}%), valid={is_valid}"
     )
 
     return is_valid, message, details

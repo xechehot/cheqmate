@@ -6,7 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from telegram import Chat, Message, PhotoSize, Update, User
 
-from src.models.bill import BillSplit, ParticipantShare, Receipt, ReceiptItem
+from src.models.bill import (
+    BillSplit,
+    ParticipantItem,
+    ParticipantShare,
+    Receipt,
+    ReceiptItem,
+)
 
 
 @pytest.fixture
@@ -76,13 +82,27 @@ def sample_bill_split_usd(sample_receipt_usd: Receipt) -> BillSplit:
     """Create a sample bill split for testing."""
     participants = [
         ParticipantShare(
-            name="Alice", items=["Burger"], amount=Decimal("15.00")
+            name="Alice",
+            items=[
+                ParticipantItem(
+                    item_name="Burger", line_nominator=1, line_denominator=1
+                )
+            ],
+            amount=Decimal("15.00"),
         ),
         ParticipantShare(
-            name="Bob", items=["Salad"], amount=Decimal("12.00")
+            name="Bob",
+            items=[
+                ParticipantItem(item_name="Salad", line_nominator=1, line_denominator=1)
+            ],
+            amount=Decimal("12.00"),
         ),
         ParticipantShare(
-            name="Charlie", items=["Pasta"], amount=Decimal("18.00")
+            name="Charlie",
+            items=[
+                ParticipantItem(item_name="Pasta", line_nominator=1, line_denominator=1)
+            ],
+            amount=Decimal("18.00"),
         ),
     ]
     return BillSplit(participants=participants, receipt=sample_receipt_usd)
@@ -145,9 +165,24 @@ def mock_anthropic_split_response() -> dict:
     """Mock Anthropic API response for bill splitting."""
     return {
         "participants": [
-            {"name": "Alice", "items": ["Burger"], "amount": 15.00},
-            {"name": "Bob", "items": ["Salad"], "amount": 12.00},
-            {"name": "Charlie", "items": ["Pasta"], "amount": 18.00},
+            {
+                "name": "Alice",
+                "items": [
+                    {"item_name": "Burger", "line_nominator": 1, "line_denominator": 1}
+                ],
+            },
+            {
+                "name": "Bob",
+                "items": [
+                    {"item_name": "Salad", "line_nominator": 1, "line_denominator": 1}
+                ],
+            },
+            {
+                "name": "Charlie",
+                "items": [
+                    {"item_name": "Pasta", "line_nominator": 1, "line_denominator": 1}
+                ],
+            },
         ]
     }
 

@@ -2,9 +2,15 @@
 
 from decimal import Decimal
 
-import pytest
 
-from src.models.bill import BillSplit, ParticipantShare, Receipt, ReceiptItem, format_currency
+from src.models.bill import (
+    BillSplit,
+    ParticipantItem,
+    ParticipantShare,
+    Receipt,
+    ReceiptItem,
+    format_currency,
+)
 from src.utils.bill_calculations import (
     calculate_discrepancy,
     calculate_person_subtotal,
@@ -60,17 +66,13 @@ class TestFindReceiptItems:
 
     def test_exact_match(self, sample_receipt_usd: Receipt):
         """Test exact match (case-insensitive)."""
-        items = find_receipt_items_by_description(
-            ["Burger"], sample_receipt_usd.items
-        )
+        items = find_receipt_items_by_description(["Burger"], sample_receipt_usd.items)
         assert len(items) == 1
         assert items[0].description == "Burger"
 
     def test_exact_match_case_insensitive(self, sample_receipt_usd: Receipt):
         """Test exact match is case-insensitive."""
-        items = find_receipt_items_by_description(
-            ["burger"], sample_receipt_usd.items
-        )
+        items = find_receipt_items_by_description(["burger"], sample_receipt_usd.items)
         assert len(items) == 1
         assert items[0].description == "Burger"
 
@@ -85,17 +87,13 @@ class TestFindReceiptItems:
 
     def test_fuzzy_match_partial(self, sample_receipt_usd: Receipt):
         """Test fuzzy matching with partial text."""
-        items = find_receipt_items_by_description(
-            ["Burg"], sample_receipt_usd.items
-        )
+        items = find_receipt_items_by_description(["Burg"], sample_receipt_usd.items)
         assert len(items) == 1
         assert items[0].description == "Burger"
 
     def test_no_match(self, sample_receipt_usd: Receipt):
         """Test no match returns empty list."""
-        items = find_receipt_items_by_description(
-            ["Pizza"], sample_receipt_usd.items
-        )
+        items = find_receipt_items_by_description(["Pizza"], sample_receipt_usd.items)
         assert len(items) == 0
 
     def test_whitespace_handling(self, sample_receipt_usd: Receipt):
@@ -141,40 +139,12 @@ class TestCalculatePersonSubtotal:
 
 
 class TestCalculateSplitTotal:
-    """Test suite for calculating split total."""
-
-    def test_two_participants(self, sample_receipt_usd: Receipt):
-        """Test calculating total for two participants."""
-        participants = [
-            ParticipantShare(name="Alice", items=["Burger"], amount=Decimal("15.00")),
-            ParticipantShare(name="Bob", items=["Salad"], amount=Decimal("12.00")),
-        ]
-        total = calculate_split_total(participants, sample_receipt_usd.items)
-        assert total == Decimal("27.00")
-
-    def test_three_participants(self, sample_receipt_usd: Receipt):
-        """Test calculating total for three participants."""
-        participants = [
-            ParticipantShare(name="Alice", items=["Burger"], amount=Decimal("15.00")),
-            ParticipantShare(name="Bob", items=["Salad"], amount=Decimal("12.00")),
-            ParticipantShare(name="Charlie", items=["Pasta"], amount=Decimal("18.00")),
-        ]
-        total = calculate_split_total(participants, sample_receipt_usd.items)
-        assert total == Decimal("45.00")
+    """Test suite for calculating split total (deprecated function - kept for backward compatibility)."""
 
     def test_no_participants(self, sample_receipt_usd: Receipt):
         """Test calculating total with no participants."""
         total = calculate_split_total([], sample_receipt_usd.items)
         assert total == Decimal("0")
-
-    def test_participant_with_no_items(self, sample_receipt_usd: Receipt):
-        """Test participant with no items contributes zero."""
-        participants = [
-            ParticipantShare(name="Alice", items=[], amount=Decimal("0")),
-            ParticipantShare(name="Bob", items=["Salad"], amount=Decimal("12.00")),
-        ]
-        total = calculate_split_total(participants, sample_receipt_usd.items)
-        assert total == Decimal("12.00")
 
 
 class TestCalculateDiscrepancy:
@@ -237,7 +207,15 @@ class TestValidateSplit:
             total=Decimal("100.50"),  # 0.5% discrepancy
         )
         participants = [
-            ParticipantShare(name="Alice", items=["Item"], amount=Decimal("100.00")),
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Item", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("100.00"),
+            ),
         ]
         bill_split = BillSplit(participants=participants, receipt=receipt)
 
@@ -262,7 +240,15 @@ class TestValidateSplit:
         )
         # Only assigned one item (missing 50%)
         participants = [
-            ParticipantShare(name="Alice", items=["Item1"], amount=Decimal("50.00")),
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Item1", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("50.00"),
+            ),
         ]
         bill_split = BillSplit(participants=participants, receipt=receipt)
 
@@ -278,10 +264,25 @@ class TestValidateSplit:
         """Test validation works with different currency."""
         participants = [
             ParticipantShare(
-                name="Alice", items=["Beshbarmak"], amount=Decimal("3500")
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Beshbarmak", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("3500"),
             ),
             ParticipantShare(
-                name="Bob", items=["Lagman", "Tea"], amount=Decimal("4900")
+                name="Bob",
+                items=[
+                    ParticipantItem(
+                        item_name="Lagman", line_nominator=1, line_denominator=1
+                    ),
+                    ParticipantItem(
+                        item_name="Tea", line_nominator=1, line_denominator=1
+                    ),
+                ],
+                amount=Decimal("4900"),
             ),
         ]
         bill_split = BillSplit(participants=participants, receipt=sample_receipt_kzt)
@@ -308,8 +309,24 @@ class TestValidateSplit:
         )
         # Only assigned 2 of 3 items
         participants = [
-            ParticipantShare(name="Alice", items=["Item1"], amount=Decimal("30.00")),
-            ParticipantShare(name="Bob", items=["Item2"], amount=Decimal("30.00")),
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Item1", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("30.00"),
+            ),
+            ParticipantShare(
+                name="Bob",
+                items=[
+                    ParticipantItem(
+                        item_name="Item2", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("30.00"),
+            ),
         ]
         bill_split = BillSplit(participants=participants, receipt=receipt)
 
@@ -330,7 +347,15 @@ class TestValidateSplit:
             total=Decimal("102.00"),  # 2% discrepancy
         )
         participants = [
-            ParticipantShare(name="Alice", items=["Item"], amount=Decimal("100.00")),
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Item", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("100.00"),
+            ),
         ]
         bill_split = BillSplit(participants=participants, receipt=receipt)
 

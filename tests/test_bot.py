@@ -95,7 +95,9 @@ class TestStartCommand:
         assert "/help" in message_text
 
     @pytest.mark.asyncio
-    async def test_start_command_without_message(self, mock_telegram_context: MagicMock):
+    async def test_start_command_without_message(
+        self, mock_telegram_context: MagicMock
+    ):
         """Test start command handles missing message gracefully."""
         update = MagicMock(spec=Update)
         update.effective_user = MagicMock()
@@ -105,9 +107,7 @@ class TestStartCommand:
         await start_command(update, mock_telegram_context)
 
     @pytest.mark.asyncio
-    async def test_start_command_without_user(
-        self, mock_telegram_context: MagicMock
-    ):
+    async def test_start_command_without_user(self, mock_telegram_context: MagicMock):
         """Test start command handles missing user gracefully."""
         update = MagicMock(spec=Update)
         update.effective_user = None

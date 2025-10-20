@@ -85,14 +85,31 @@ class Receipt(BaseModel):
     total: Decimal = Field(description="Grand total of the receipt")
 
 
+class ParticipantItem(BaseModel):
+    """Represents a single item in a participant's share with fractional quantity."""
+
+    item_name: str = Field(description="Name of the item from the receipt")
+    line_nominator: int = Field(
+        description="Number of shares this participant has (numerator)",
+        gt=0,
+    )
+    line_denominator: int = Field(
+        description="Total number of shares for this item (denominator)",
+        gt=0,
+    )
+
+
 class ParticipantShare(BaseModel):
     """Represents a participant's share of the bill."""
 
     name: str = Field(description="Participant's name")
-    items: list[str] = Field(
-        default_factory=list, description="List of items assigned to this participant"
+    items: list[ParticipantItem] = Field(
+        default_factory=list,
+        description="List of items with fractional quantities assigned to this participant",
     )
-    amount: Decimal = Field(description="Total amount this participant owes")
+    amount: Decimal = Field(
+        description="Total amount this participant owes (calculated from items)"
+    )
 
 
 class BillSplit(BaseModel):
@@ -141,7 +158,18 @@ class BillSplit(BaseModel):
         for participant in self.participants:
             lines.append(f"\n**{participant.name}:**")
             if participant.items:
-                lines.append(f"Items: {', '.join(participant.items)}")
+                # Format items with fractions
+                item_strings = []
+                for item in participant.items:
+                    if item.line_nominator == item.line_denominator:
+                        # Full item (1/1)
+                        item_strings.append(f"{item.item_name} (full)")
+                    else:
+                        # Fractional item
+                        item_strings.append(
+                            f"{item.item_name} ({item.line_nominator}/{item.line_denominator})"
+                        )
+                lines.append(f"Items: {', '.join(item_strings)}")
             amount_fmt = format_currency(participant.amount, self.receipt.currency)
             lines.append(f"**Amount: {amount_fmt}**")
 

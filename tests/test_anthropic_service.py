@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.models.bill import BillSplit, Receipt, ReceiptItem
+from src.models.bill import BillSplit, Receipt
 from src.services.anthropic_service import (
     AnthropicService,
     detect_image_media_type,
@@ -261,7 +261,10 @@ class TestAnthropicServiceBillSplitting:
             # Verify first participant
             alice = bill_split.participants[0]
             assert alice.name == "Alice"
-            assert alice.items == ["Burger"]
+            assert len(alice.items) == 1
+            assert alice.items[0].item_name == "Burger"
+            assert alice.items[0].line_nominator == 1
+            assert alice.items[0].line_denominator == 1
             assert alice.amount == Decimal("15.00")
 
     @pytest.mark.asyncio
@@ -269,16 +272,45 @@ class TestAnthropicServiceBillSplitting:
         """Test bill splitting with shared items."""
         shared_response = {
             "participants": [
-                {"name": "Alice", "items": ["Burger"], "amount": 15.00},
+                {
+                    "name": "Alice",
+                    "items": [
+                        {
+                            "item_name": "Burger",
+                            "line_nominator": 1,
+                            "line_denominator": 1,
+                        }
+                    ],
+                },
                 {
                     "name": "Bob",
-                    "items": ["Salad (shared)", "Pasta (shared)"],
-                    "amount": 15.00,
+                    "items": [
+                        {
+                            "item_name": "Salad",
+                            "line_nominator": 1,
+                            "line_denominator": 2,
+                        },
+                        {
+                            "item_name": "Pasta",
+                            "line_nominator": 1,
+                            "line_denominator": 2,
+                        },
+                    ],
                 },
                 {
                     "name": "Charlie",
-                    "items": ["Salad (shared)", "Pasta (shared)"],
-                    "amount": 15.00,
+                    "items": [
+                        {
+                            "item_name": "Salad",
+                            "line_nominator": 1,
+                            "line_denominator": 2,
+                        },
+                        {
+                            "item_name": "Pasta",
+                            "line_nominator": 1,
+                            "line_denominator": 2,
+                        },
+                    ],
                 },
             ]
         }
@@ -300,8 +332,15 @@ class TestAnthropicServiceBillSplitting:
             )
 
             assert len(bill_split.participants) == 3
-            # Verify Bob has shared items
-            assert "Salad (shared)" in bill_split.participants[1].items
+            # Verify Bob has shared items (half of Salad and Pasta)
+            bob = bill_split.participants[1]
+            assert len(bob.items) == 2
+            assert bob.items[0].item_name == "Salad"
+            assert bob.items[0].line_nominator == 1
+            assert bob.items[0].line_denominator == 2
+            assert bob.items[1].item_name == "Pasta"
+            assert bob.items[1].line_nominator == 1
+            assert bob.items[1].line_denominator == 2
 
     @pytest.mark.asyncio
     async def test_split_bill_invalid_json(self, sample_receipt_usd: Receipt):
@@ -328,8 +367,26 @@ class TestAnthropicServiceBillSplitting:
         """Test that bill splitting uses correct currency in prompts."""
         mock_response = {
             "participants": [
-                {"name": "Alice", "items": ["Beshbarmak"], "amount": 3500},
-                {"name": "Bob", "items": ["Lagman"], "amount": 4000},
+                {
+                    "name": "Alice",
+                    "items": [
+                        {
+                            "item_name": "Beshbarmak",
+                            "line_nominator": 1,
+                            "line_denominator": 1,
+                        }
+                    ],
+                },
+                {
+                    "name": "Bob",
+                    "items": [
+                        {
+                            "item_name": "Lagman",
+                            "line_nominator": 1,
+                            "line_denominator": 1,
+                        }
+                    ],
+                },
             ]
         }
 
@@ -344,7 +401,7 @@ class TestAnthropicServiceBillSplitting:
             mock_client.messages.create.return_value = mock_message
 
             service = AnthropicService()
-            bill_split = await service.split_bill(
+            await service.split_bill(
                 "Alice had Beshbarmak, Bob had Lagman", sample_receipt_kzt
             )
 

@@ -4,9 +4,19 @@ import logging
 from typing import Final
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-from src.bot.handlers import new_bill_command, photo_message_handler
+from src.bot.handlers import (
+    new_bill_command,
+    photo_message_handler,
+    text_message_handler,
+)
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -15,19 +25,25 @@ logger = logging.getLogger(__name__)
 CAPABILITIES_MESSAGE: Final[str] = """
 👋 **Welcome to CheqMate!**
 
-I'm your smart receipt recognition assistant powered by AI.
+I'm your smart bill splitting assistant powered by AI.
 
-📸 **Receipt Scanning**
-Take a photo of your receipt, and I'll extract all the items, prices, and totals using AI-powered OCR with Claude Vision.
+💰 **Bill Splitting**
+Split restaurant bills fairly among friends! Just send me a receipt photo and tell me who ate what, and I'll calculate each person's share.
 
 ---
 
 **How to use:**
 1. Use `/new_bill` or `/new` to start
-2. Send a photo of the receipt
-3. Review the extracted items
+2. Send a photo of the receipt (or describe who ate what first)
+3. Describe what each person ate (or send the receipt if you haven't)
+4. Get your split breakdown!
 
-Ready to scan some receipts? Let's get started!
+**Example:**
+"I had the burger and fries, Sarah had the salad, and John had the pasta."
+
+You can send the receipt and description in any order - I'll figure it out!
+
+Ready to split some bills? Let's get started!
 
 Type /help anytime to see this message again.
 """
@@ -56,7 +72,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle errors in the bot."""
-    logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
+    logger.error(
+        f"Exception while handling an update: {context.error}", exc_info=context.error
+    )
 
 
 def create_bot() -> Application:
@@ -70,8 +88,11 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("new_bill", new_bill_command))
     application.add_handler(CommandHandler("new", new_bill_command))
 
-    # Register message handlers
+    # Register message handlers (order matters - more specific first)
     application.add_handler(MessageHandler(filters.PHOTO, photo_message_handler))
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler)
+    )
 
     # Register error handler
     application.add_error_handler(error_handler)

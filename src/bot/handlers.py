@@ -10,7 +10,7 @@ from src.bot.conversation_manager import conversation_manager
 from src.models.bill import format_currency
 from src.models.conversation_state import BillSession, ConversationStep
 from src.services.anthropic_service import AnthropicService
-from src.utils.bill_calculations import validate_split
+from src.utils.bill_calculations import analyze_split_discrepancy, validate_split
 
 logger = logging.getLogger(__name__)
 
@@ -81,26 +81,67 @@ async def process_bill_split(
         # Initialize Anthropic service
         anthropic_service = AnthropicService()
 
-        # Split the bill
-        bill_split = await anthropic_service.split_bill(
+        # Step 1: Get initial split
+        initial_split = await anthropic_service.split_bill(
             participant_description=session.participant_description,  # type: ignore
             receipt=session.receipt_data,  # type: ignore
         )
 
-        # Validate the split using Python calculations
-        is_valid, validation_message, details = validate_split(bill_split)
+        # Step 2: Validate initial split and analyze discrepancy
+        initial_is_valid, initial_validation_message, initial_details = validate_split(
+            initial_split
+        )
+        initial_discrepancy = analyze_split_discrepancy(initial_split)
 
-        # Format the result
-        result_text = bill_split.format_summary()
-
-        # Add validation info
-        result_text += f"\n\n{validation_message}"
+        # Step 3: Display initial split
+        initial_result_text = "📊 **Initial Split:**\n\n"
+        initial_result_text += initial_split.format_summary()
+        initial_result_text += f"\n\n{initial_validation_message}"
 
         # Delete processing message
         await processing_message.delete()
 
-        # Send result
-        await update.message.reply_text(result_text, parse_mode="Markdown")
+        # Send initial split
+        await update.message.reply_text(initial_result_text, parse_mode="Markdown")
+
+        # Step 4: Refine the split with LLM
+        refining_message = await update.message.reply_text(
+            "⏳ Refining the split with AI...\n\nAnalyzing discrepancies and improving assignments.",
+            parse_mode="Markdown",
+        )
+
+        refined_split = await anthropic_service.refine_bill_split(
+            receipt=session.receipt_data,  # type: ignore
+            initial_split=initial_split,
+            discrepancy=initial_discrepancy,
+        )
+
+        # Step 5: Validate refined split and analyze its discrepancy
+        refined_is_valid, refined_validation_message, refined_details = validate_split(
+            refined_split
+        )
+        refined_discrepancy = analyze_split_discrepancy(refined_split)
+
+        # Step 6: Display refined split with improvement metrics
+        refined_result_text = "✨ **Refined Split:**\n\n"
+        refined_result_text += refined_split.format_summary()
+        refined_result_text += f"\n\n{refined_validation_message}"
+
+        # Add improvement summary
+        initial_pct = initial_details["discrepancy_pct"]
+        refined_pct = refined_details["discrepancy_pct"]
+        improvement_text = "\n\n📈 **Improvement:**\n"
+        improvement_text += f"• Discrepancy: {initial_pct:.2f}% → {refined_pct:.2f}%\n"
+        if len(initial_discrepancy.missed_items) > 0:
+            improvement_text += f"• Missed items: {len(initial_discrepancy.missed_items)} → {len(refined_discrepancy.missed_items)}"
+
+        refined_result_text += improvement_text
+
+        # Delete refining message
+        await refining_message.delete()
+
+        # Send refined split
+        await update.message.reply_text(refined_result_text, parse_mode="Markdown")
 
         logger.info(f"Successfully processed bill split for chat {chat_id}")
 

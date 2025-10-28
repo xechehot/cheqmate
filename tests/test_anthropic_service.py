@@ -12,6 +12,7 @@ from src.services.anthropic_service import (
     detect_image_media_type,
     extract_json_from_response,
 )
+from src.utils.bill_calculations import analyze_split_discrepancy
 
 
 class TestExtractJsonFromResponse:
@@ -412,3 +413,263 @@ class TestAnthropicServiceBillSplitting:
 
             # Check that KZT symbol appears in prompt
             assert "₸" in user_message or "KZT" in user_message
+
+
+class TestAnthropicServiceBillRefinement:
+    """Test suite for bill split refinement with Anthropic API."""
+
+    @pytest.mark.asyncio
+    async def test_refine_bill_split_success(
+        self,
+        sample_receipt_usd: Receipt,
+        sample_bill_split_with_missed_items: BillSplit,
+    ):
+        """Test successful bill split refinement."""
+        # Analyze discrepancy in the initial split
+        discrepancy = analyze_split_discrepancy(sample_bill_split_with_missed_items)
+
+        # Mock refined response that includes all items
+        mock_refined_response = {
+            "participants": [
+                {
+                    "name": "Alice",
+                    "items": [
+                        {
+                            "item_name": "Burger",
+                            "line_nominator": 1,
+                            "line_denominator": 1,
+                        }
+                    ],
+                },
+                {
+                    "name": "Bob",
+                    "items": [
+                        {
+                            "item_name": "Salad",
+                            "line_nominator": 1,
+                            "line_denominator": 1,
+                        }
+                    ],
+                },
+                {
+                    "name": "Charlie",
+                    "items": [
+                        {
+                            "item_name": "Pasta",
+                            "line_nominator": 1,
+                            "line_denominator": 1,
+                        }
+                    ],
+                },
+            ]
+        }
+
+        with patch("src.services.anthropic_service.Anthropic") as MockAnthropic:
+            mock_client = MagicMock()
+            MockAnthropic.return_value = mock_client
+
+            mock_message = MagicMock()
+            mock_content = MagicMock()
+            mock_content.text = json.dumps(mock_refined_response)[1:]
+            mock_message.content = [mock_content]
+            mock_client.messages.create.return_value = mock_message
+
+            service = AnthropicService()
+            refined_split = await service.refine_bill_split(
+                receipt=sample_receipt_usd,
+                initial_split=sample_bill_split_with_missed_items,
+                discrepancy=discrepancy,
+            )
+
+            # Verify the refined split has all participants
+            assert isinstance(refined_split, BillSplit)
+            assert len(refined_split.participants) == 3
+
+            # Verify all items are now assigned
+            refined_discrepancy = analyze_split_discrepancy(refined_split)
+            assert len(refined_discrepancy.missed_items) == 0
+            assert refined_discrepancy.total_difference == Decimal("0")
+
+    @pytest.mark.asyncio
+    async def test_refine_bill_split_includes_discrepancy_info(
+        self,
+        sample_receipt_usd: Receipt,
+        sample_bill_split_with_missed_items: BillSplit,
+    ):
+        """Test that refinement prompt includes discrepancy information."""
+        discrepancy = analyze_split_discrepancy(sample_bill_split_with_missed_items)
+
+        mock_refined_response = {
+            "participants": [
+                {
+                    "name": "Alice",
+                    "items": [
+                        {
+                            "item_name": "Burger",
+                            "line_nominator": 1,
+                            "line_denominator": 1,
+                        },
+                        {
+                            "item_name": "Pasta",
+                            "line_nominator": 1,
+                            "line_denominator": 2,
+                        },
+                    ],
+                },
+                {
+                    "name": "Bob",
+                    "items": [
+                        {
+                            "item_name": "Salad",
+                            "line_nominator": 1,
+                            "line_denominator": 1,
+                        },
+                        {
+                            "item_name": "Pasta",
+                            "line_nominator": 1,
+                            "line_denominator": 2,
+                        },
+                    ],
+                },
+            ]
+        }
+
+        with patch("src.services.anthropic_service.Anthropic") as MockAnthropic:
+            mock_client = MagicMock()
+            MockAnthropic.return_value = mock_client
+
+            mock_message = MagicMock()
+            mock_content = MagicMock()
+            mock_content.text = json.dumps(mock_refined_response)[1:]
+            mock_message.content = [mock_content]
+            mock_client.messages.create.return_value = mock_message
+
+            service = AnthropicService()
+            await service.refine_bill_split(
+                receipt=sample_receipt_usd,
+                initial_split=sample_bill_split_with_missed_items,
+                discrepancy=discrepancy,
+            )
+
+            # Verify the prompt included discrepancy information
+            call_args = mock_client.messages.create.call_args
+            messages = call_args.kwargs["messages"]
+            user_message = messages[0]["content"][0]["text"]
+
+            # Check that discrepancy details are in the prompt
+            assert "Discrepancy Analysis" in user_message
+            assert "Missed Items" in user_message
+            assert "Pasta" in user_message  # The missed item
+            assert "Current Split" in user_message
+
+    @pytest.mark.asyncio
+    async def test_refine_bill_split_handles_fractional_assignments(
+        self,
+        sample_receipt_usd: Receipt,
+        sample_bill_split_with_missed_items: BillSplit,
+    ):
+        """Test that refinement correctly handles fractional item assignments."""
+        discrepancy = analyze_split_discrepancy(sample_bill_split_with_missed_items)
+
+        # Mock refined response with fractional assignments
+        mock_refined_response = {
+            "participants": [
+                {
+                    "name": "Alice",
+                    "items": [
+                        {
+                            "item_name": "Burger",
+                            "line_nominator": 1,
+                            "line_denominator": 1,
+                        },
+                        {
+                            "item_name": "Pasta",
+                            "line_nominator": 1,
+                            "line_denominator": 3,
+                        },
+                    ],
+                },
+                {
+                    "name": "Bob",
+                    "items": [
+                        {
+                            "item_name": "Salad",
+                            "line_nominator": 1,
+                            "line_denominator": 1,
+                        },
+                        {
+                            "item_name": "Pasta",
+                            "line_nominator": 2,
+                            "line_denominator": 3,
+                        },
+                    ],
+                },
+            ]
+        }
+
+        with patch("src.services.anthropic_service.Anthropic") as MockAnthropic:
+            mock_client = MagicMock()
+            MockAnthropic.return_value = mock_client
+
+            mock_message = MagicMock()
+            mock_content = MagicMock()
+            mock_content.text = json.dumps(mock_refined_response)[1:]
+            mock_message.content = [mock_content]
+            mock_client.messages.create.return_value = mock_message
+
+            service = AnthropicService()
+            refined_split = await service.refine_bill_split(
+                receipt=sample_receipt_usd,
+                initial_split=sample_bill_split_with_missed_items,
+                discrepancy=discrepancy,
+            )
+
+            # Verify fractional assignments
+            alice = refined_split.participants[0]
+            bob = refined_split.participants[1]
+
+            # Alice has full Burger + 1/3 Pasta
+            assert len(alice.items) == 2
+            pasta_item_alice = [i for i in alice.items if i.item_name == "Pasta"][0]
+            assert pasta_item_alice.line_nominator == 1
+            assert pasta_item_alice.line_denominator == 3
+
+            # Bob has full Salad + 2/3 Pasta
+            assert len(bob.items) == 2
+            pasta_item_bob = [i for i in bob.items if i.item_name == "Pasta"][0]
+            assert pasta_item_bob.line_nominator == 2
+            assert pasta_item_bob.line_denominator == 3
+
+            # Verify amounts are calculated correctly
+            # Alice: 15 (Burger) + 6 (1/3 of 18 Pasta) = 21
+            assert alice.amount == Decimal("21.00")
+            # Bob: 12 (Salad) + 12 (2/3 of 18 Pasta) = 24
+            assert bob.amount == Decimal("24.00")
+
+    @pytest.mark.asyncio
+    async def test_refine_bill_split_handles_api_error(
+        self,
+        sample_receipt_usd: Receipt,
+        sample_bill_split_with_missed_items: BillSplit,
+    ):
+        """Test error handling when refinement API call fails."""
+        discrepancy = analyze_split_discrepancy(sample_bill_split_with_missed_items)
+
+        with patch("src.services.anthropic_service.Anthropic") as MockAnthropic:
+            mock_client = MagicMock()
+            MockAnthropic.return_value = mock_client
+
+            mock_message = MagicMock()
+            mock_content = MagicMock()
+            mock_content.text = "invalid json response"
+            mock_message.content = [mock_content]
+            mock_client.messages.create.return_value = mock_message
+
+            service = AnthropicService()
+
+            with pytest.raises(ValueError, match="Failed to refine bill split"):
+                await service.refine_bill_split(
+                    receipt=sample_receipt_usd,
+                    initial_split=sample_bill_split_with_missed_items,
+                    discrepancy=discrepancy,
+                )

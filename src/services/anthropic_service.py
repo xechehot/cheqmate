@@ -410,6 +410,30 @@ Output ONLY a valid JSON object with this exact structure (no markdown, no expla
         else:
             missed_text = "None - all items assigned"
 
+        # Format detailed item assignment analysis (NEW)
+        if discrepancy.item_details:
+            item_details_lines = []
+            for detail in discrepancy.item_details:
+                item_name = detail.receipt_item.description
+                assigned_frac = detail.assigned_fraction
+                unassigned_frac = detail.unassigned_fraction
+                unassigned_amt = abs(detail.unassigned_amount)
+                unassigned_amt_fmt = format_currency(unassigned_amt, receipt.currency)
+
+                if detail.status == "under_assigned":
+                    item_details_lines.append(
+                        f"- {item_name}: {assigned_frac:.2f}/1.0 assigned, "
+                        f"{unassigned_frac:.2f} unassigned → {unassigned_amt_fmt} MISSING"
+                    )
+                elif detail.status == "over_assigned":
+                    item_details_lines.append(
+                        f"- {item_name}: {assigned_frac:.2f}/1.0 assigned "
+                        f"(OVER-ASSIGNED by {abs(unassigned_frac):.2f} → {unassigned_amt_fmt} EXTRA)"
+                    )
+            item_details_text = "\n".join(item_details_lines)
+        else:
+            item_details_text = "None - all items perfectly assigned"
+
         # Format discrepancy information
         total_fmt = format_currency(receipt.total, receipt.currency)
         split_total_fmt = format_currency(discrepancy.split_total, receipt.currency)
@@ -434,17 +458,24 @@ Output ONLY a valid JSON object with this exact structure (no markdown, no expla
 **Discrepancy Analysis:**
 - Difference: {difference_fmt} {difference_direction} (split is {discrepancy.total_difference:+.2f})
 - Percentage: {discrepancy.percentage_difference:.2f}%
-- Missed Items (NOT assigned to anyone):
+
+**Item Assignment Issues:**
+{item_details_text}
+
+**Missed Items (completely unassigned):**
 {missed_text}
 
 **Your Task:**
 1. Review the current split and identify issues:
-   - Which items from the receipt are NOT assigned to any participant?
-   - Why might the split total not match the receipt total?
+   - Which items are under-assigned (not fully assigned to participants)?
+   - Which items are over-assigned (assigned more than they should be)?
+   - Which items from the receipt are NOT assigned to any participant at all?
 2. Refine the split to fix these issues:
-   - Assign ALL missed items to the appropriate participants (infer from context who likely had these items)
-   - If you cannot determine who had a missed item, distribute it equally among all participants
-   - Adjust fractional quantities if needed to balance the split
+   - For UNDER-ASSIGNED items: increase the fractional assignments or assign the missing portions to appropriate participants
+   - For OVER-ASSIGNED items: reduce the fractional assignments to match the actual item quantity
+   - For MISSED items: assign them to the appropriate participants (infer from context who likely had these items)
+   - If you cannot determine who had an item, distribute it equally among all participants
+   - Adjust fractional quantities to ensure each receipt item is assigned exactly 1.0 total (not more, not less)
 3. Ensure the refined split total matches the receipt total as closely as possible
 
 **Important Rules:**
@@ -452,6 +483,7 @@ Output ONLY a valid JSON object with this exact structure (no markdown, no expla
 - Use exact or close-matching item names from the receipt
 - line_nominator and line_denominator must be positive integers
 - For full (unshared) items, use line_nominator=1 and line_denominator=1
+- For shared items, fractions across all participants should sum to 1.0 (e.g., two people sharing = 1/2 each)
 - DO NOT calculate amounts - only provide item names and fractional quantities
 
 Output ONLY a valid JSON object with this exact structure (no markdown, no explanations):

@@ -21,7 +21,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Setup
 
-### Initial Project Setup
+### GitHub Codespaces (Recommended for Quick Start)
+
+The project is configured for GitHub Codespaces with a pre-built development environment:
+
+**Quick Start:**
+1. Click "Open in GitHub Codespaces" badge in README or visit: https://codespaces.new/xechehot/cheqmate
+2. Environment automatically includes: Python 3.13, uv, npm, Claude Code CLI, and all dependencies
+3. Add API keys as Codespaces secrets or edit `.env` file
+4. Start coding immediately!
+
+**Features:**
+- Pre-configured VS Code with Python, Pylance, and Ruff extensions
+- Automatic dependency installation via `uv sync`
+- Fast startup (~10 seconds with prebuilds)
+- Switch between branches/tags freely using Git commands
+
+**Configuration Files:**
+- `.devcontainer/devcontainer.json` - Container configuration
+- `.devcontainer/post-create.sh` - Setup script (installs uv, Claude Code, dependencies)
+- `.github/workflows/codespaces-prebuild.yml` - Prebuild workflow for fast startup
+
+**Rebuilding Container:**
+If you update devcontainer configuration, rebuild using:
+- Command Palette (Cmd/Ctrl+Shift+P) → "Codespaces: Rebuild Container"
+
+### Local Development Setup
 
 ```bash
 # Project already initialized with uv

@@ -1,5 +1,7 @@
 # cheqmate 🧾
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/xechehot/cheqmate)
+
 **Split restaurant bills effortlessly with AI.**
 
 A Telegram bot that takes your voice note + receipt photo and automatically splits the bill among friends. Just say who ordered what, snap a photo of the receipt, and let AI handle the rest.
@@ -24,7 +26,36 @@ Perfect for group dinners where apps like Splitwise help track IOUs but don't si
   - [OpenAI API Key](https://platform.openai.com/api-keys) (for Whisper + GPT-4 Vision)
   - [Splitwise API](https://secure.splitwise.com/apps) (optional, for export)
 
-## Get Started
+## Quick Start with GitHub Codespaces
+
+The fastest way to get started is using GitHub Codespaces - a fully configured development environment in your browser:
+
+1. **Click the badge above** or [open in Codespaces](https://codespaces.new/xechehot/cheqmate)
+2. **Wait ~10 seconds** for the environment to load (prebuilt!)
+3. **Add your API keys** as Codespaces secrets:
+   - Go to [GitHub Settings → Codespaces → Secrets](https://github.com/settings/codespaces)
+   - Add `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, and optionally `SPLITWISE_API_KEY`
+   - Or manually edit the `.env` file in the codespace
+4. **Run the bot**: `uv run python main.py`
+
+### Working with branches and tags
+
+You can easily switch between different versions:
+
+```bash
+# Switch to a specific branch
+git checkout stage/split_bill_v0
+
+# Switch to a specific tag
+git checkout empty_bot
+
+# Create a new branch
+git checkout -b my-feature
+```
+
+No need to rebuild the container - just switch and code!
+
+## Get Started (Local Development)
 
 ```bash
 # Clone the repo

@@ -23,8 +23,7 @@ Perfect for group dinners where apps like Splitwise help track IOUs but don't si
 - **uv** - Fast Python package manager ([install here](https://docs.astral.sh/uv/))
 - **API Keys:**
   - [Telegram Bot Token](https://t.me/botfather) (free)
-  - [OpenAI API Key](https://platform.openai.com/api-keys) (for Whisper + GPT-4 Vision)
-  - [Splitwise API](https://secure.splitwise.com/apps) (optional, for export)
+  - Anthropic API Key - to OCR bill and then split it using LLM
 
 ## Quick Start with GitHub Codespaces
 
@@ -34,7 +33,8 @@ The fastest way to get started is using GitHub Codespaces - a fully configured d
 2. **Wait ~10 seconds** for the environment to load (prebuilt!)
 3. **Add your API keys** as Codespaces secrets:
    - Go to [GitHub Settings → Codespaces → Secrets](https://github.com/settings/codespaces)
-   - Add `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, and optionally `SPLITWISE_API_KEY`
+   - Add `TELEGRAM_BOT_TOKEN`,
+   - ADD `ANTHROPIC_API_KEY`,
    - Or manually edit the `.env` file in the codespace
 4. **Run the bot**: `uv run python main.py`
 

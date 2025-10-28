@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**cheqmate** is a Telegram bot that splits restaurant bills using voice notes and receipt photos. It automatically assigns dishes to friends and exports splits to Splitwise/Tricount.
+**cheqmate** is a Telegram bot that splits restaurant bills using voice notes and receipt photos. It automatically assigns dishes to friends.
 
 ## Technology Stack
 
@@ -128,11 +128,7 @@ Export Service → Push to Splitwise/Tricount
 Copy `.env.example` to `.env` and fill in your API keys:
 
 - `TELEGRAM_BOT_TOKEN`: Get from [@BotFather](https://t.me/botfather) on Telegram
-- `OPENAI_API_KEY`: For Whisper voice transcription and GPT-4 Vision OCR
-- `ANTHROPIC_API_KEY`: Alternative to OpenAI for receipt processing
-- `SPLITWISE_CONSUMER_KEY` & `SPLITWISE_CONSUMER_SECRET`: From [Splitwise Apps](https://secure.splitwise.com/apps)
-- `TRICOUNT_API_KEY`: For Tricount integration (if available)
-- `DATABASE_URL`: SQLite path (default: `sqlite:///cheqmate.db`)
+- `ANTHROPIC_API_KEY`: OCR and bill split processing
 
 ## Project Structure Conventions
 

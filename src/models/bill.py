@@ -174,3 +174,22 @@ class BillSplit(BaseModel):
             lines.append(f"**Amount: {amount_fmt}**")
 
         return "\n".join(lines)
+
+
+class SplitDiscrepancy(BaseModel):
+    """Analysis of discrepancies between receipt and bill split."""
+
+    original_total: Decimal = Field(description="Grand total from the receipt")
+    split_total: Decimal = Field(
+        description="Sum of all participant amounts in the split"
+    )
+    total_difference: Decimal = Field(
+        description="Difference between original and split totals (original - split)"
+    )
+    percentage_difference: Decimal = Field(
+        description="Discrepancy as a percentage of the original total"
+    )
+    missed_items: list[ReceiptItem] = Field(
+        default_factory=list,
+        description="Receipt items not assigned to any participant",
+    )

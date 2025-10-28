@@ -8,6 +8,7 @@ from src.models.bill import (
     ParticipantItem,
     ParticipantShare,
     ReceiptItem,
+    SplitDiscrepancy,
     format_currency,
 )
 
@@ -309,3 +310,63 @@ def validate_split(
     )
 
     return is_valid, message, details
+
+
+def analyze_split_discrepancy(bill_split: BillSplit) -> SplitDiscrepancy:
+    """
+    Analyze discrepancies between the receipt and bill split.
+
+    This function:
+    1. Identifies receipt items not assigned to any participant
+    2. Calculates total discrepancy between receipt and split
+    3. Returns structured analysis for LLM refinement
+
+    Args:
+        bill_split: The complete bill split to analyze
+
+    Returns:
+        SplitDiscrepancy object with detailed analysis
+    """
+    # Calculate split totals and discrepancy
+    calculated_split_total, discrepancy_amount, discrepancy_pct = (
+        calculate_split_discrepancy(bill_split)
+    )
+
+    # Find missed items: receipt items not assigned to any participant
+    assigned_item_names = set()
+    for participant in bill_split.participants:
+        for item in participant.items:
+            # Normalize for comparison (case-insensitive, stripped)
+            assigned_item_names.add(item.item_name.lower().strip())
+
+    missed_items = []
+    for receipt_item in bill_split.receipt.items:
+        receipt_item_name = receipt_item.description.lower().strip()
+        # Check if this receipt item appears in any participant's items
+        if receipt_item_name not in assigned_item_names:
+            # Also try fuzzy matching to account for slight name variations
+            found = False
+            for assigned_name in assigned_item_names:
+                if (
+                    assigned_name in receipt_item_name
+                    or receipt_item_name in assigned_name
+                ):
+                    found = True
+                    break
+            if not found:
+                missed_items.append(receipt_item)
+
+    logger.info(
+        f"Discrepancy analysis: split_total={calculated_split_total}, "
+        f"original_total={bill_split.receipt.total}, "
+        f"difference={discrepancy_amount} ({discrepancy_pct:.2f}%), "
+        f"missed_items={len(missed_items)}"
+    )
+
+    return SplitDiscrepancy(
+        original_total=bill_split.receipt.total,
+        split_total=calculated_split_total,
+        total_difference=bill_split.receipt.total - calculated_split_total,
+        percentage_difference=discrepancy_pct,
+        missed_items=missed_items,
+    )

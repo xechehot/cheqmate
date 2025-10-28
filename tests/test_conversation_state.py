@@ -1,6 +1,5 @@
 """Tests for conversation state management."""
 
-
 from src.models.bill import Receipt
 from src.models.conversation_state import BillSession, ConversationStep
 

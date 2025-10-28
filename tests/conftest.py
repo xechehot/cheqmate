@@ -279,3 +279,28 @@ def mock_telegram_context() -> MagicMock:
 def sample_image_bytes() -> bytes:
     """Create sample image bytes (JPEG signature)."""
     return b"\xff\xd8\xff" + b"\x00" * 100
+
+
+@pytest.fixture
+def sample_bill_split_with_missed_items(sample_receipt_usd: Receipt) -> BillSplit:
+    """Create a sample bill split with missed items for testing refinement."""
+    # Only assign 2 of 3 items (Pasta is missed)
+    participants = [
+        ParticipantShare(
+            name="Alice",
+            items=[
+                ParticipantItem(
+                    item_name="Burger", line_nominator=1, line_denominator=1
+                )
+            ],
+            amount=Decimal("15.00"),
+        ),
+        ParticipantShare(
+            name="Bob",
+            items=[
+                ParticipantItem(item_name="Salad", line_nominator=1, line_denominator=1)
+            ],
+            amount=Decimal("12.00"),
+        ),
+    ]
+    return BillSplit(participants=participants, receipt=sample_receipt_usd)

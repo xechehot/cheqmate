@@ -15,6 +15,7 @@ from src.models.bill import (
     ParticipantShare,
     Receipt,
     ReceiptItem,
+    SplitDiscrepancy,
     format_currency,
 )
 from src.utils.bill_calculations import calculate_participant_total
@@ -347,3 +348,195 @@ Output ONLY a valid JSON object with this exact structure (no markdown, no expla
             logger.error(f"Failed to parse split data: {e}")
             logger.error(f"Raw response: {full_response}")
             raise ValueError(f"Failed to split bill: {e}")
+
+    async def refine_bill_split(
+        self,
+        receipt: Receipt,
+        initial_split: BillSplit,
+        discrepancy: SplitDiscrepancy,
+    ) -> BillSplit:
+        """
+        Refine a bill split by analyzing discrepancies and improving assignments.
+
+        This method uses Claude to improve the initial split by:
+        1. Assigning missed items to appropriate participants
+        2. Adjusting fractional shares to match the receipt total
+        3. Balancing the split to minimize discrepancies
+
+        Args:
+            receipt: Original receipt with all items
+            initial_split: Initial bill split to refine
+            discrepancy: Analysis of discrepancies in the initial split
+
+        Returns:
+            Refined BillSplit object with improved assignments
+        """
+        logger.info("Starting bill split refinement with Claude")
+
+        # Format receipt items
+        items_text = "\n".join(
+            [
+                f"- {item.description}: {format_currency(item.line_total, receipt.currency)}"
+                + (f" (x{item.quantity})" if item.quantity > 1 else "")
+                for item in receipt.items
+            ]
+        )
+
+        # Format current participant assignments
+        participants_text = []
+        for participant in initial_split.participants:
+            items_list = []
+            for item in participant.items:
+                if item.line_nominator == item.line_denominator:
+                    items_list.append(f"{item.item_name} (full)")
+                else:
+                    items_list.append(
+                        f"{item.item_name} ({item.line_nominator}/{item.line_denominator})"
+                    )
+            participant_amount = format_currency(participant.amount, receipt.currency)
+            participants_text.append(
+                f"- {participant.name}: {', '.join(items_list)} → {participant_amount}"
+            )
+        participants_summary = "\n".join(participants_text)
+
+        # Format missed items
+        if discrepancy.missed_items:
+            missed_text = "\n".join(
+                [
+                    f"- {item.description}: {format_currency(item.line_total, receipt.currency)}"
+                    for item in discrepancy.missed_items
+                ]
+            )
+        else:
+            missed_text = "None - all items assigned"
+
+        # Format discrepancy information
+        total_fmt = format_currency(receipt.total, receipt.currency)
+        split_total_fmt = format_currency(discrepancy.split_total, receipt.currency)
+        difference_fmt = format_currency(
+            abs(discrepancy.total_difference), receipt.currency
+        )
+        difference_direction = "under" if discrepancy.total_difference > 0 else "over"
+
+        # Create refinement prompt
+        prompt = f"""You are refining a bill split that has discrepancies. Your task is to improve the split so that:
+1. All receipt items are assigned to participants
+2. The sum of participant totals matches the receipt total as closely as possible
+
+**Receipt Items:**
+{items_text}
+**Receipt Total: {total_fmt}**
+
+**Current Split (INITIAL VERSION):**
+{participants_summary}
+**Current Split Total: {split_total_fmt}**
+
+**Discrepancy Analysis:**
+- Difference: {difference_fmt} {difference_direction} (split is {discrepancy.total_difference:+.2f})
+- Percentage: {discrepancy.percentage_difference:.2f}%
+- Missed Items (NOT assigned to anyone):
+{missed_text}
+
+**Your Task:**
+1. Review the current split and identify issues:
+   - Which items from the receipt are NOT assigned to any participant?
+   - Why might the split total not match the receipt total?
+2. Refine the split to fix these issues:
+   - Assign ALL missed items to the appropriate participants (infer from context who likely had these items)
+   - If you cannot determine who had a missed item, distribute it equally among all participants
+   - Adjust fractional quantities if needed to balance the split
+3. Ensure the refined split total matches the receipt total as closely as possible
+
+**Important Rules:**
+- ONLY use item names that exist on the receipt (from the "Receipt Items" list above)
+- Use exact or close-matching item names from the receipt
+- line_nominator and line_denominator must be positive integers
+- For full (unshared) items, use line_nominator=1 and line_denominator=1
+- DO NOT calculate amounts - only provide item names and fractional quantities
+
+Output ONLY a valid JSON object with this exact structure (no markdown, no explanations):
+{{
+  "participants": [
+    {{
+      "name": "Person Name",
+      "items": [
+        {{
+          "item_name": "Item from receipt",
+          "line_nominator": 1,
+          "line_denominator": 1
+        }}
+      ]
+    }}
+  ]
+}}"""
+
+        # Call Claude API with response prefilling
+        message = self.client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=3072,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": prompt}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "{"}],
+                },
+            ],
+        )
+
+        # Extract text response
+        response_text = message.content[0].text if message.content else ""
+        # Prepend the prefilled "{" back to make valid JSON
+        full_response = "{" + response_text
+        logger.debug(f"Claude refinement response: {full_response}")
+
+        # Extract JSON from potential markdown wrapper
+        json_text = extract_json_from_response(full_response)
+
+        # Parse JSON response
+        try:
+            split_data = json.loads(json_text)
+
+            # Build ParticipantShare objects with ParticipantItem objects
+            participants = []
+            for p in split_data["participants"]:
+                # Parse ParticipantItem objects
+                participant_items = [
+                    ParticipantItem(
+                        item_name=item["item_name"],
+                        line_nominator=item["line_nominator"],
+                        line_denominator=item["line_denominator"],
+                    )
+                    for item in p["items"]
+                ]
+
+                # Calculate amount using Python (not from LLM)
+                calculated_amount = calculate_participant_total(
+                    participant_items, receipt.items
+                )
+
+                # Create ParticipantShare with calculated amount
+                participant_share = ParticipantShare(
+                    name=p["name"],
+                    items=participant_items,
+                    amount=calculated_amount,
+                )
+                participants.append(participant_share)
+
+            # Build refined BillSplit object
+            refined_split = BillSplit(
+                participants=participants,
+                receipt=receipt,
+            )
+
+            logger.info(
+                f"Successfully refined bill split with {len(participants)} participants"
+            )
+            return refined_split
+
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.error(f"Failed to parse refined split data: {e}")
+            logger.error(f"Raw response: {full_response}")
+            raise ValueError(f"Failed to refine bill split: {e}")

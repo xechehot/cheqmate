@@ -12,6 +12,7 @@ from src.models.bill import (
     format_currency,
 )
 from src.utils.bill_calculations import (
+    analyze_split_discrepancy,
     calculate_discrepancy,
     calculate_person_subtotal,
     calculate_split_total,
@@ -366,3 +367,280 @@ class TestValidateSplit:
         # Should pass with 5% threshold
         is_valid, _, _ = validate_split(bill_split, threshold_percentage=Decimal("5.0"))
         assert is_valid is True
+
+
+class TestAnalyzeSplitDiscrepancy:
+    """Test suite for split discrepancy analysis."""
+
+    def test_perfect_split_no_discrepancy(self, sample_bill_split_usd: BillSplit):
+        """Test analysis of a perfect split with no discrepancy."""
+        discrepancy = analyze_split_discrepancy(sample_bill_split_usd)
+
+        assert discrepancy.original_total == Decimal("45.00")
+        assert discrepancy.split_total == Decimal("45.00")
+        assert discrepancy.total_difference == Decimal("0")
+        assert discrepancy.percentage_difference == Decimal("0")
+        assert len(discrepancy.missed_items) == 0
+
+    def test_split_with_missed_items(self):
+        """Test analysis when some items are not assigned."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Burger", line_total=Decimal("15.00")),
+                ReceiptItem(description="Salad", line_total=Decimal("12.00")),
+                ReceiptItem(description="Pasta", line_total=Decimal("18.00")),
+            ],
+            total=Decimal("45.00"),
+        )
+        # Only assign 2 items, miss "Pasta"
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Burger", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("15.00"),
+            ),
+            ParticipantShare(
+                name="Bob",
+                items=[
+                    ParticipantItem(
+                        item_name="Salad", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("12.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        discrepancy = analyze_split_discrepancy(bill_split)
+
+        assert discrepancy.original_total == Decimal("45.00")
+        assert discrepancy.split_total == Decimal("27.00")
+        assert discrepancy.total_difference == Decimal("18.00")  # 45 - 27
+        assert discrepancy.percentage_difference == Decimal("40")  # 18/45 * 100
+        assert len(discrepancy.missed_items) == 1
+        assert discrepancy.missed_items[0].description == "Pasta"
+
+    def test_split_with_all_items_missed(self):
+        """Test analysis when all items are not assigned."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Burger", line_total=Decimal("15.00")),
+                ReceiptItem(description="Salad", line_total=Decimal("12.00")),
+            ],
+            total=Decimal("27.00"),
+        )
+        # No items assigned
+        participants = [
+            ParticipantShare(name="Alice", items=[], amount=Decimal("0")),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        discrepancy = analyze_split_discrepancy(bill_split)
+
+        assert discrepancy.original_total == Decimal("27.00")
+        assert discrepancy.split_total == Decimal("0")
+        assert discrepancy.total_difference == Decimal("27.00")
+        assert discrepancy.percentage_difference == Decimal("100")
+        assert len(discrepancy.missed_items) == 2
+
+    def test_split_with_fractional_items(self):
+        """Test analysis with fractional item assignments."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Pizza", line_total=Decimal("20.00")),
+                ReceiptItem(description="Salad", line_total=Decimal("10.00")),
+            ],
+            total=Decimal("30.00"),
+        )
+        # Pizza shared between two people, Salad not assigned
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Pizza", line_nominator=1, line_denominator=2
+                    )
+                ],
+                amount=Decimal("10.00"),
+            ),
+            ParticipantShare(
+                name="Bob",
+                items=[
+                    ParticipantItem(
+                        item_name="Pizza", line_nominator=1, line_denominator=2
+                    )
+                ],
+                amount=Decimal("10.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        discrepancy = analyze_split_discrepancy(bill_split)
+
+        assert discrepancy.original_total == Decimal("30.00")
+        assert discrepancy.split_total == Decimal("20.00")  # 10 + 10
+        assert discrepancy.total_difference == Decimal("10.00")  # 30 - 20
+        assert len(discrepancy.missed_items) == 1
+        assert discrepancy.missed_items[0].description == "Salad"
+
+    def test_fuzzy_matching_for_assigned_items(self):
+        """Test that fuzzy matching is used to identify assigned items."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(
+                    description="Cheeseburger Deluxe", line_total=Decimal("15.00")
+                ),
+                ReceiptItem(description="Caesar Salad", line_total=Decimal("12.00")),
+            ],
+            total=Decimal("27.00"),
+        )
+        # Participants use shortened names that fuzzy match
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Cheeseburger",  # Partial match
+                        line_nominator=1,
+                        line_denominator=1,
+                    )
+                ],
+                amount=Decimal("15.00"),
+            ),
+            ParticipantShare(
+                name="Bob",
+                items=[
+                    ParticipantItem(
+                        item_name="Salad",  # Partial match
+                        line_nominator=1,
+                        line_denominator=1,
+                    )
+                ],
+                amount=Decimal("12.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        discrepancy = analyze_split_discrepancy(bill_split)
+
+        # With fuzzy matching, no items should be missed
+        assert len(discrepancy.missed_items) == 0
+        assert discrepancy.total_difference == Decimal("0")
+
+    def test_case_insensitive_item_matching(self):
+        """Test that item matching is case-insensitive."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="BURGER", line_total=Decimal("15.00")),
+            ],
+            total=Decimal("15.00"),
+        )
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="burger",  # Lowercase
+                        line_nominator=1,
+                        line_denominator=1,
+                    )
+                ],
+                amount=Decimal("15.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        discrepancy = analyze_split_discrepancy(bill_split)
+
+        assert len(discrepancy.missed_items) == 0
+        assert discrepancy.total_difference == Decimal("0")
+
+    def test_over_allocated_split(self):
+        """Test analysis when split total exceeds receipt total."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Item", line_total=Decimal("10.00")),
+            ],
+            total=Decimal("10.00"),
+        )
+        # Assign item twice (incorrectly)
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Item", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("10.00"),
+            ),
+            ParticipantShare(
+                name="Bob",
+                items=[
+                    ParticipantItem(
+                        item_name="Item", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("10.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        discrepancy = analyze_split_discrepancy(bill_split)
+
+        assert discrepancy.original_total == Decimal("10.00")
+        assert discrepancy.split_total == Decimal("20.00")  # Over-allocated
+        assert discrepancy.total_difference == Decimal("-10.00")  # Negative (over)
+        assert discrepancy.percentage_difference == Decimal("100")  # 10/10 * 100
+        # No missed items since "Item" is assigned (even if over-assigned)
+        assert len(discrepancy.missed_items) == 0
+
+    def test_multiple_missed_items(self):
+        """Test analysis with multiple missed items."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Item1", line_total=Decimal("10.00")),
+                ReceiptItem(description="Item2", line_total=Decimal("15.00")),
+                ReceiptItem(description="Item3", line_total=Decimal("20.00")),
+                ReceiptItem(description="Item4", line_total=Decimal("5.00")),
+            ],
+            total=Decimal("50.00"),
+        )
+        # Only assign Item1
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Item1", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("10.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        discrepancy = analyze_split_discrepancy(bill_split)
+
+        assert len(discrepancy.missed_items) == 3
+        missed_descriptions = {item.description for item in discrepancy.missed_items}
+        assert missed_descriptions == {"Item2", "Item3", "Item4"}
+        assert discrepancy.total_difference == Decimal("40.00")  # 50 - 10

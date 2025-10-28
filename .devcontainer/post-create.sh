@@ -38,6 +38,16 @@ else
     echo "✅ .env file already exists"
 fi
 
+# Configure git remote
+echo ""
+echo "🔗 Configuring git remote..."
+if ! git remote get-url origin >/dev/null 2>&1; then
+    git remote add origin https://github.com/xechehot/cheqmate.git
+    echo "✅ Git remote 'origin' configured"
+else
+    echo "✅ Git remote 'origin' already exists"
+fi
+
 echo ""
 echo "========================================="
 echo "✨ Setup complete!"

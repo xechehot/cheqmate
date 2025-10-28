@@ -14,6 +14,7 @@ from src.models.bill import (
 from src.utils.bill_calculations import (
     analyze_split_discrepancy,
     calculate_discrepancy,
+    calculate_item_assignment_details,
     calculate_person_subtotal,
     calculate_split_total,
     find_receipt_items_by_description,
@@ -644,3 +645,415 @@ class TestAnalyzeSplitDiscrepancy:
         missed_descriptions = {item.description for item in discrepancy.missed_items}
         assert missed_descriptions == {"Item2", "Item3", "Item4"}
         assert discrepancy.total_difference == Decimal("40.00")  # 50 - 10
+
+
+class TestCalculateItemAssignmentDetails:
+    """Test suite for detailed item assignment analysis."""
+
+    def test_perfect_assignment(self, sample_bill_split_usd: BillSplit):
+        """Test when all items are perfectly assigned (all fractions = 1.0)."""
+        item_details = calculate_item_assignment_details(sample_bill_split_usd)
+
+        # All items perfectly assigned, should return empty list
+        assert len(item_details) == 0
+
+    def test_partial_assignment_single_item(self):
+        """Test when an item is partially assigned (0.5/1.0)."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Pizza", line_total=Decimal("20.00")),
+            ],
+            total=Decimal("20.00"),
+        )
+        # Only assign half of the pizza
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Pizza", line_nominator=1, line_denominator=2
+                    )
+                ],
+                amount=Decimal("10.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        item_details = calculate_item_assignment_details(bill_split)
+
+        assert len(item_details) == 1
+        detail = item_details[0]
+        assert detail.receipt_item.description == "Pizza"
+        assert detail.assigned_fraction == Decimal("0.5")
+        assert detail.unassigned_fraction == Decimal("0.5")
+        assert detail.unassigned_amount == Decimal("10.00")
+        assert detail.status == "under_assigned"
+
+    def test_over_assignment(self):
+        """Test when an item is over-assigned (1.5/1.0)."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Burger", line_total=Decimal("15.00")),
+            ],
+            total=Decimal("15.00"),
+        )
+        # Assign burger 1.5 times (incorrectly)
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Burger", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("15.00"),
+            ),
+            ParticipantShare(
+                name="Bob",
+                items=[
+                    ParticipantItem(
+                        item_name="Burger", line_nominator=1, line_denominator=2
+                    )
+                ],
+                amount=Decimal("7.50"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        item_details = calculate_item_assignment_details(bill_split)
+
+        assert len(item_details) == 1
+        detail = item_details[0]
+        assert detail.receipt_item.description == "Burger"
+        assert detail.assigned_fraction == Decimal("1.5")
+        assert detail.unassigned_fraction == Decimal("-0.5")
+        assert detail.unassigned_amount == Decimal("-7.50")
+        assert detail.status == "over_assigned"
+
+    def test_unassigned_item(self):
+        """Test when an item is not assigned at all (0.0/1.0)."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Burger", line_total=Decimal("15.00")),
+                ReceiptItem(description="Salad", line_total=Decimal("12.00")),
+            ],
+            total=Decimal("27.00"),
+        )
+        # Only assign Burger, miss Salad
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Burger", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("15.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        item_details = calculate_item_assignment_details(bill_split)
+
+        assert len(item_details) == 1
+        detail = item_details[0]
+        assert detail.receipt_item.description == "Salad"
+        assert detail.assigned_fraction == Decimal("0")
+        assert detail.unassigned_fraction == Decimal("1.0")
+        assert detail.unassigned_amount == Decimal("12.00")
+        assert detail.status == "under_assigned"
+
+    def test_multiple_participants_sharing_correctly(self):
+        """Test when multiple participants share an item correctly (fractions sum to 1.0)."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Pizza", line_total=Decimal("20.00")),
+            ],
+            total=Decimal("20.00"),
+        )
+        # Two people sharing pizza equally
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Pizza", line_nominator=1, line_denominator=2
+                    )
+                ],
+                amount=Decimal("10.00"),
+            ),
+            ParticipantShare(
+                name="Bob",
+                items=[
+                    ParticipantItem(
+                        item_name="Pizza", line_nominator=1, line_denominator=2
+                    )
+                ],
+                amount=Decimal("10.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        item_details = calculate_item_assignment_details(bill_split)
+
+        # Perfect sharing, should return empty list
+        assert len(item_details) == 0
+
+    def test_three_way_sharing_with_issue(self):
+        """Test three people sharing but one forgot to claim their share."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Pizza", line_total=Decimal("30.00")),
+            ],
+            total=Decimal("30.00"),
+        )
+        # Only 2 of 3 people claimed their shares
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Pizza", line_nominator=1, line_denominator=3
+                    )
+                ],
+                amount=Decimal("10.00"),
+            ),
+            ParticipantShare(
+                name="Bob",
+                items=[
+                    ParticipantItem(
+                        item_name="Pizza", line_nominator=1, line_denominator=3
+                    )
+                ],
+                amount=Decimal("10.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        item_details = calculate_item_assignment_details(bill_split)
+
+        assert len(item_details) == 1
+        detail = item_details[0]
+        assert detail.receipt_item.description == "Pizza"
+        # 1/3 + 1/3 = 2/3, so 1/3 is missing
+        # Use approximate comparison due to decimal precision
+        assert abs(detail.assigned_fraction - Decimal("2") / Decimal("3")) < Decimal(
+            "0.01"
+        )
+        assert abs(detail.unassigned_fraction - Decimal("1") / Decimal("3")) < Decimal(
+            "0.01"
+        )
+        assert abs(detail.unassigned_amount - Decimal("10.00")) < Decimal("0.01")
+        assert detail.status == "under_assigned"
+
+    def test_mixed_items_some_perfect_some_issues(self):
+        """Test mix of perfectly assigned items and items with issues."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Burger", line_total=Decimal("15.00")),
+                ReceiptItem(description="Salad", line_total=Decimal("12.00")),
+                ReceiptItem(description="Pasta", line_total=Decimal("18.00")),
+            ],
+            total=Decimal("45.00"),
+        )
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Burger", line_nominator=1, line_denominator=1
+                    )  # Perfect
+                ],
+                amount=Decimal("15.00"),
+            ),
+            ParticipantShare(
+                name="Bob",
+                items=[
+                    ParticipantItem(
+                        item_name="Salad", line_nominator=1, line_denominator=2
+                    )  # Partial
+                ],
+                amount=Decimal("6.00"),
+            ),
+            # Pasta not assigned at all
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        item_details = calculate_item_assignment_details(bill_split)
+
+        assert len(item_details) == 2  # Salad and Pasta have issues
+
+        # Check details (order might vary, so check both)
+        salad_detail = next(
+            (d for d in item_details if d.receipt_item.description == "Salad"), None
+        )
+        pasta_detail = next(
+            (d for d in item_details if d.receipt_item.description == "Pasta"), None
+        )
+
+        assert salad_detail is not None
+        assert salad_detail.assigned_fraction == Decimal("0.5")
+        assert salad_detail.status == "under_assigned"
+
+        assert pasta_detail is not None
+        assert pasta_detail.assigned_fraction == Decimal("0")
+        assert pasta_detail.status == "under_assigned"
+
+    def test_fuzzy_matching_in_assignment_details(self):
+        """Test that fuzzy matching works for item assignment tracking."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(
+                    description="Cheeseburger Deluxe", line_total=Decimal("15.00")
+                ),
+            ],
+            total=Decimal("15.00"),
+        )
+        # Participant uses shortened name
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Cheeseburger", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("15.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        item_details = calculate_item_assignment_details(bill_split)
+
+        # Should be perfect due to fuzzy matching
+        assert len(item_details) == 0
+
+    def test_case_insensitive_matching(self):
+        """Test that item matching is case-insensitive."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="BURGER", line_total=Decimal("15.00")),
+            ],
+            total=Decimal("15.00"),
+        )
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="burger", line_nominator=1, line_denominator=1
+                    )
+                ],
+                amount=Decimal("15.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        item_details = calculate_item_assignment_details(bill_split)
+
+        # Should be perfect due to case-insensitive matching
+        assert len(item_details) == 0
+
+    def test_rounding_tolerance(self):
+        """Test that small rounding errors are tolerated (within threshold)."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Item", line_total=Decimal("10.00")),
+            ],
+            total=Decimal("10.00"),
+        )
+        # Assign fractions that sum to 1.005 (slightly over due to rounding)
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Item", line_nominator=1, line_denominator=3
+                    )
+                ],
+                amount=Decimal("3.33"),
+            ),
+            ParticipantShare(
+                name="Bob",
+                items=[
+                    ParticipantItem(
+                        item_name="Item", line_nominator=1, line_denominator=3
+                    )
+                ],
+                amount=Decimal("3.33"),
+            ),
+            ParticipantShare(
+                name="Charlie",
+                items=[
+                    ParticipantItem(
+                        item_name="Item", line_nominator=1, line_denominator=3
+                    )
+                ],
+                amount=Decimal("3.34"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        item_details = calculate_item_assignment_details(bill_split)
+
+        # Should be within threshold (3 * 1/3 = 1.0 exactly)
+        assert len(item_details) == 0
+
+    def test_analyze_discrepancy_includes_item_details(self):
+        """Test that analyze_split_discrepancy includes item_details."""
+        receipt = Receipt(
+            restaurant_name="Test",
+            currency="USD",
+            items=[
+                ReceiptItem(description="Burger", line_total=Decimal("15.00")),
+                ReceiptItem(description="Salad", line_total=Decimal("12.00")),
+            ],
+            total=Decimal("27.00"),
+        )
+        # Burger fully assigned, Salad half assigned
+        participants = [
+            ParticipantShare(
+                name="Alice",
+                items=[
+                    ParticipantItem(
+                        item_name="Burger", line_nominator=1, line_denominator=1
+                    ),
+                    ParticipantItem(
+                        item_name="Salad", line_nominator=1, line_denominator=2
+                    ),
+                ],
+                amount=Decimal("21.00"),
+            ),
+        ]
+        bill_split = BillSplit(participants=participants, receipt=receipt)
+
+        discrepancy = analyze_split_discrepancy(bill_split)
+
+        # Check that item_details is populated
+        assert len(discrepancy.item_details) == 1
+        assert discrepancy.item_details[0].receipt_item.description == "Salad"
+        assert discrepancy.item_details[0].status == "under_assigned"
+
+        # Check legacy missed_items is empty (since both items are mentioned)
+        assert len(discrepancy.missed_items) == 0
+
+        # Check discrepancy amounts
+        assert discrepancy.total_difference == Decimal("6.00")  # 27 - 21

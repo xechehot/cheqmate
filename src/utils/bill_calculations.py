@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from src.models.bill import (
     BillSplit,
+    ItemAssignmentDetail,
     ParticipantItem,
     ParticipantShare,
     ReceiptItem,
@@ -312,14 +313,107 @@ def validate_split(
     return is_valid, message, details
 
 
+def calculate_item_assignment_details(
+    bill_split: BillSplit,
+) -> list[ItemAssignmentDetail]:
+    """
+    Calculate detailed assignment coverage for each receipt item.
+
+    For each receipt item, this function:
+    1. Finds all participant assignments that match this item
+    2. Sums up the assigned fractions across all participants
+    3. Calculates unassigned portion and its dollar value
+    4. Detects under-assignments and over-assignments
+
+    Args:
+        bill_split: The complete bill split to analyze
+
+    Returns:
+        List of ItemAssignmentDetail objects for items with issues (under/over assigned)
+        Items with perfect assignment (assigned_fraction ≈ 1.0) are excluded
+    """
+    # Threshold for considering an assignment "perfect" (allows for small rounding errors)
+    PERFECT_THRESHOLD = Decimal("0.01")
+
+    item_details = []
+
+    for receipt_item in bill_split.receipt.items:
+        # Track total assigned fraction for this receipt item
+        total_assigned_fraction = Decimal("0")
+
+        # Find all participant assignments that match this receipt item
+        for participant in bill_split.participants:
+            for participant_item in participant.items:
+                # Check if this participant item matches the receipt item
+                # Use same fuzzy matching logic as find_receipt_item_by_name
+                participant_name_lower = participant_item.item_name.lower().strip()
+                receipt_name_lower = receipt_item.description.lower().strip()
+
+                # Try exact match first
+                if participant_name_lower == receipt_name_lower:
+                    fraction = Decimal(participant_item.line_nominator) / Decimal(
+                        participant_item.line_denominator
+                    )
+                    total_assigned_fraction += fraction
+                # Try fuzzy match (partial string matching)
+                elif (
+                    participant_name_lower in receipt_name_lower
+                    or receipt_name_lower in participant_name_lower
+                ):
+                    fraction = Decimal(participant_item.line_nominator) / Decimal(
+                        participant_item.line_denominator
+                    )
+                    total_assigned_fraction += fraction
+
+        # Calculate unassigned fraction and amount
+        expected_fraction = Decimal("1.0")
+        unassigned_fraction = expected_fraction - total_assigned_fraction
+        unassigned_amount = unassigned_fraction * receipt_item.line_total
+
+        # Determine status
+        if abs(unassigned_fraction) <= PERFECT_THRESHOLD:
+            status = "perfect"
+        elif unassigned_fraction > PERFECT_THRESHOLD:
+            status = "under_assigned"
+        else:  # unassigned_fraction < -PERFECT_THRESHOLD
+            status = "over_assigned"
+
+        # Only include items with issues (not perfect)
+        if status != "perfect":
+            detail = ItemAssignmentDetail(
+                receipt_item=receipt_item,
+                assigned_fraction=total_assigned_fraction,
+                expected_fraction=expected_fraction,
+                unassigned_fraction=unassigned_fraction,
+                unassigned_amount=unassigned_amount,
+                status=status,
+            )
+            item_details.append(detail)
+
+            logger.debug(
+                f"Item '{receipt_item.description}': "
+                f"{total_assigned_fraction:.2f}/1.0 assigned, "
+                f"status={status}, "
+                f"unassigned_amount={unassigned_amount:.2f}"
+            )
+
+    logger.info(
+        f"Item assignment analysis: {len(item_details)} items with issues "
+        f"out of {len(bill_split.receipt.items)} total items"
+    )
+
+    return item_details
+
+
 def analyze_split_discrepancy(bill_split: BillSplit) -> SplitDiscrepancy:
     """
     Analyze discrepancies between the receipt and bill split.
 
     This function:
-    1. Identifies receipt items not assigned to any participant
-    2. Calculates total discrepancy between receipt and split
-    3. Returns structured analysis for LLM refinement
+    1. Identifies receipt items not assigned to any participant (legacy check)
+    2. Calculates detailed per-item assignment coverage (new detailed check)
+    3. Calculates total discrepancy between receipt and split
+    4. Returns structured analysis for LLM refinement
 
     Args:
         bill_split: The complete bill split to analyze
@@ -332,7 +426,10 @@ def analyze_split_discrepancy(bill_split: BillSplit) -> SplitDiscrepancy:
         calculate_split_discrepancy(bill_split)
     )
 
-    # Find missed items: receipt items not assigned to any participant
+    # Calculate detailed per-item assignment analysis (NEW)
+    item_details = calculate_item_assignment_details(bill_split)
+
+    # Find missed items: receipt items not assigned to any participant (LEGACY)
     assigned_item_names = set()
     for participant in bill_split.participants:
         for item in participant.items:
@@ -360,7 +457,8 @@ def analyze_split_discrepancy(bill_split: BillSplit) -> SplitDiscrepancy:
         f"Discrepancy analysis: split_total={calculated_split_total}, "
         f"original_total={bill_split.receipt.total}, "
         f"difference={discrepancy_amount} ({discrepancy_pct:.2f}%), "
-        f"missed_items={len(missed_items)}"
+        f"missed_items={len(missed_items)}, "
+        f"items_with_issues={len(item_details)}"
     )
 
     return SplitDiscrepancy(
@@ -369,4 +467,5 @@ def analyze_split_discrepancy(bill_split: BillSplit) -> SplitDiscrepancy:
         total_difference=bill_split.receipt.total - calculated_split_total,
         percentage_difference=discrepancy_pct,
         missed_items=missed_items,
+        item_details=item_details,
     )

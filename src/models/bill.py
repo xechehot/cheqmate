@@ -1,7 +1,7 @@
 """Data models for receipt processing."""
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -176,6 +176,28 @@ class BillSplit(BaseModel):
         return "\n".join(lines)
 
 
+class ItemAssignmentDetail(BaseModel):
+    """Detailed analysis of how much of a receipt item is assigned to participants."""
+
+    receipt_item: ReceiptItem = Field(description="The receipt item being analyzed")
+    assigned_fraction: Decimal = Field(
+        description="Total fraction assigned across all participants (e.g., 0.75 means 75% assigned)"
+    )
+    expected_fraction: Decimal = Field(
+        default=Decimal("1.0"),
+        description="Expected fraction (always 1.0 for complete assignment)",
+    )
+    unassigned_fraction: Decimal = Field(
+        description="Fraction not assigned (1.0 - assigned_fraction, can be negative if over-assigned)"
+    )
+    unassigned_amount: Decimal = Field(
+        description="Dollar value of unassigned portion (can be negative if over-assigned)"
+    )
+    status: Literal["perfect", "under_assigned", "over_assigned"] = Field(
+        description="Assignment status of this item"
+    )
+
+
 class SplitDiscrepancy(BaseModel):
     """Analysis of discrepancies between receipt and bill split."""
 
@@ -191,5 +213,9 @@ class SplitDiscrepancy(BaseModel):
     )
     missed_items: list[ReceiptItem] = Field(
         default_factory=list,
-        description="Receipt items not assigned to any participant",
+        description="Receipt items not assigned to any participant (legacy simple check)",
+    )
+    item_details: list[ItemAssignmentDetail] = Field(
+        default_factory=list,
+        description="Detailed per-item assignment analysis showing under/over assignments",
     )

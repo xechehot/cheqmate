@@ -133,7 +133,12 @@ async def process_bill_split(
         improvement_text = "\n\n📈 **Improvement:**\n"
         improvement_text += f"• Discrepancy: {initial_pct:.2f}% → {refined_pct:.2f}%\n"
         if len(initial_discrepancy.missed_items) > 0:
-            improvement_text += f"• Missed items: {len(initial_discrepancy.missed_items)} → {len(refined_discrepancy.missed_items)}"
+            improvement_text += f"• Missed items: {len(initial_discrepancy.missed_items)} → {len(refined_discrepancy.missed_items)}\n"
+        # Add item assignment issues metrics
+        initial_items_with_issues = len(initial_discrepancy.item_details)
+        refined_items_with_issues = len(refined_discrepancy.item_details)
+        if initial_items_with_issues > 0 or refined_items_with_issues > 0:
+            improvement_text += f"• Items with issues: {initial_items_with_issues} → {refined_items_with_issues}"
 
         refined_result_text += improvement_text
 

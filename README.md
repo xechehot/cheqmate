@@ -121,10 +121,8 @@ Photo → GPT-4 Vision → Extract receipt items & prices
 
 - **Python 3.13** + **uv**
 - **python-telegram-bot** - Bot framework
-- **OpenAI** - Whisper (voice) + GPT-4 Vision (OCR)
 - **thefuzz** - Fuzzy string matching
 - **SQLAlchemy** - Conversation state
-- **Splitwise SDK** - Export integration
 
 ## Contributing
 

@@ -3,7 +3,7 @@ name: Codespaces Prebuild
 on:
   push:
     branches:
-      - main
+      - default
       - 'stage/*'
   workflow_dispatch:
 
